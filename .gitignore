@@ -1,0 +1,121 @@
+# Worker scratch / agent / editor state
+.claude-work/
+.codex/
+.agents/
+.vscode/
+.vs/
+.idea/
+graphify-out/
+*.swp
+*~
+
+# Build, cache and package outputs (any depth)
+build/
+build-*/
+cmake-build*/
+_deps/
+out/
+dist/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+.cache/
+
+# CMake generated files
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+Testing/
+compile_commands.json
+build.ninja
+.ninja_deps
+.ninja_log
+
+# Generated logs
+*.log
+
+# Compiled objects, libraries, binaries, coverage data
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.elf
+*.bin
+*.map
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.gcda
+*.gcno
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ESP-IDF generated (sdkconfig.defaults stays tracked)
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# Secrets and local environment (templates stay tracked)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+
+# OS junk
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Benchmark results (benchmarks/bench.c stays tracked)
+benchmarks/*.json
+benchmarks/*.jsonl
+benchmarks/*.txt
+benchmarks/*.sha256
+
+# Internal plans, audit records and captures (not part of the public repository)
+/Pixelica_Plan.md
+/docs/*_AUDIT.md
+/docs/2D_25D_PLAN.md
+/docs/verification/

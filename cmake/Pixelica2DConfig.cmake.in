@@ -1,0 +1,34 @@
+@PACKAGE_INIT@
+
+# Pixelica2D package: find_package(Pixelica2D CONFIG REQUIRED [COMPONENTS ...])
+#
+#   target_link_libraries(game PRIVATE Pixelica2D::core)
+#
+# Pixelica2D::core is the 2D renderer (Pixelica::renderer2d) and links
+# Pixelica::common. This file is a thin wrapper: it loads the Pixelica package
+# files that sit BESIDE it in the same install prefix (lib/cmake/Pixelica), never
+# an unrelated Pixelica found elsewhere on the system, so the SDK stays
+# relocatable. The 2D SDK therefore needs the `common` component next to the
+# `renderer2d` one.
+#
+# Components: core (default, the 2D renderer; renderer2d is a synonym) and
+# common (Pixelica::common alone), and the explicitly requested optional
+# input_manager (Pixelica::input_manager) and online (Pixelica::online).
+# Pixelica2D_TEMPLATE_DIR is the installed 2D
+# starter project or "". The identical file ships with every SDK variant.
+
+set(_pixelica_pkg_name Pixelica2D)
+set(_pixelica_pkg_dir "${PACKAGE_PREFIX_DIR}/@PIXELICA_INSTALL_CMAKEDIR@")
+set(_pixelica_pkg_prefix "${PACKAGE_PREFIX_DIR}")
+set(_pixelica_pkg_share "${PACKAGE_PREFIX_DIR}/@PIXELICA_INSTALL_SHAREDIR@")
+if(NOT EXISTS "${_pixelica_pkg_dir}/PixelicaPackage.cmake")
+  set(Pixelica2D_FOUND FALSE)
+  set(Pixelica2D_NOT_FOUND_MESSAGE
+    "Pixelica2D needs the Pixelica common package files beside it, but '${_pixelica_pkg_dir}/PixelicaPackage.cmake' does not exist (install the `common` component into the same prefix)")
+else()
+  include("${_pixelica_pkg_dir}/PixelicaPackage.cmake")
+endif()
+unset(_pixelica_pkg_name)
+unset(_pixelica_pkg_dir)
+unset(_pixelica_pkg_prefix)
+unset(_pixelica_pkg_share)

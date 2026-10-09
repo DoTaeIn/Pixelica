@@ -1,0 +1,51 @@
+# HTTPS front end for the Pixelica online relay.
+# Caddy obtains and renews the TLS certificate automatically (Let's Encrypt)
+# for the domain in $PIXELICA_DOMAIN. Ports 80 and 443 must reach this host and the
+# domain's DNS A/AAAA record must point at it.
+{
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 10s
+			write 15s
+			idle 2m
+		}
+	}
+}
+
+{$PIXELICA_DOMAIN} {
+	# The wire protocol only needs these two routes; everything else is 404.
+	@online {
+		path /v1/online
+		method POST
+	}
+	@health {
+		path /health
+		method GET
+	}
+
+	handle @online {
+		# Packets are <= 4096 bytes; reject anything clearly larger early.
+		request_body {
+			max_size 8KB
+		}
+		reverse_proxy relay:8080 {
+			# Always overwrite: the relay trusts X-Forwarded-For ONLY from this
+			# proxy's fixed address (see docker-compose.yml) and never from
+			# anything a client could have sent.
+			header_up X-Forwarded-For {remote_host}
+			transport http {
+				dial_timeout 3s
+				response_header_timeout 8s
+			}
+		}
+	}
+
+	handle @health {
+		reverse_proxy relay:8080
+	}
+
+	handle {
+		respond 404
+	}
+}

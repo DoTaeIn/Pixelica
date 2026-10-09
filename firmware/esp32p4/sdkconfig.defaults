@@ -1,0 +1,22 @@
+# Pixelica ESP32-P4 firmware defaults (ESP-IDF v6.0); compile verified, hardware untested.
+#
+# Deliberately NOT set here, because they depend on the physical board that
+# has not been chosen: PSRAM (CONFIG_SPIRAM*, mode, speed, size), flash size
+# and mode, CPU frequency, LCD or bus settings, GPIO assignments. Set them
+# with `idf.py menuconfig` (or a board-specific sdkconfig.defaults.<name>)
+# once a board is chosen.
+CONFIG_IDF_TARGET="esp32p4"
+
+# Rendering is CPU bound; build with -O2 (measure before changing).
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# Main task (app_main) stack: a conservative SOFTWARE budget, not a hardware
+# figure. The renderer's clip/raster paths use bounded stack, and the engine
+# block, framebuffers and assets are heap-allocated, but ESP-IDF's default
+# (3584 bytes in v6.0) leaves little margin for logging plus the render call
+# chain. 8192 bytes is a starting point only: measure the real high-water mark
+# (uxTaskGetStackHighWaterMark) on the target and tune it.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# 1 ms ticks so vTaskDelay(1) in the headless smoke loop is short.
+CONFIG_FREERTOS_HZ=1000

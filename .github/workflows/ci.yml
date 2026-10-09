@@ -1,0 +1,273 @@
+# Pixelica CI configuration.
+#
+# STATUS: provided, NOT YET RUN on GitHub Actions. Nothing in this file is a
+# claim that any job passed; check the Actions tab for real results. The same
+# commands are meant to be runnable locally (see README.md).
+#
+# What the required jobs cover: strict warnings (-Wall -Wextra -Wpedantic
+# -Wconversion ... / MSVC /W4, all as errors) in Debug and Release on Linux and
+# Windows; the C tests; the Python unittest suite; asset reproducibility; the
+# ESP32-P4 LCD transport ownership test (pure host C, mocked port); and the
+# installed-SDK check (install, then build the copied sdk/template with
+# find_package(Pixelica CONFIG REQUIRED)).
+#
+# Engine profiles (the 2D / 3D package split): the main jobs below build BOTH
+# engines (-DPIXELICA_BUILD_3D=ON -DPIXELICA_BUILD_2D=ON, the top-level default). The
+# `profiles` job additionally builds and tests 3D-only, 2D-only and common-only
+# trees on both operating systems, and `package-sdk` runs tools/package_sdk.py,
+# which produces the separate 2D and 3D SDK archives. The 2D-only and hybrid
+# targets exist only when their sources do; nothing in this file has been run.
+#
+# Optional jobs (continue-on-error): arm64 cross-compile + qemu, and an
+# ESP-IDF v6.0 compile of firmware/esp32p4. A green optional job still says
+# nothing about real hardware: no ESP32-P4 board and no Raspberry Pi were used.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # No SDL involved: core, tests, examples with the headless driver, Python
+  # tooling tests, asset reproducibility and the installed-SDK template check.
+  headless:
+    name: headless / ${{ matrix.os }} / ${{ matrix.config }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Both engines ON (3D core + 2D renderer + hybrid). The optional
+      # skeleton/IK modules default to OFF; they are enabled here so this job
+      # also builds test_skeleton, test_ik and the hello_rig smoke test.
+      - name: Configure (both engines, strict warnings, Python required, optional modules ON)
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+          -DPIXELICA_PLATFORM=HEADLESS
+          -DPIXELICA_BUILD_3D=ON
+          -DPIXELICA_BUILD_2D=ON
+          -DPIXELICA_WARNINGS_AS_ERRORS=ON
+          -DPIXELICA_REQUIRE_PYTHON=ON
+          -DPIXELICA_BUILD_SKELETON=ON
+          -DPIXELICA_BUILD_IK=ON
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+      - name: Test (C tests, python_unittest, asset_reproducibility, esp32p4_lcd_transport, sdk_installed_template)
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
+
+  # Engine profiles that the main jobs do not cover: 3D only, 2D only and
+  # common only (both engines OFF). Each profile is its own build tree. Tests of
+  # a disabled engine are omitted by CMake; the common tests (math, input,
+  # animation), the boundary/package checks and the Python tools still run.
+  profiles:
+    name: profiles (3D-only, 2D-only, common-only) / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 3D only - configure, build, test
+        run: >
+          cmake -S . -B build-3d -DCMAKE_BUILD_TYPE=Release
+          -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_BUILD_3D=ON -DPIXELICA_BUILD_2D=OFF
+          -DPIXELICA_WARNINGS_AS_ERRORS=ON -DPIXELICA_REQUIRE_PYTHON=ON
+      - run: cmake --build build-3d --config Release --parallel
+      - run: ctest --test-dir build-3d -C Release --output-on-failure
+      - name: 2D only - configure, build, test
+        run: >
+          cmake -S . -B build-2d -DCMAKE_BUILD_TYPE=Release
+          -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_BUILD_3D=OFF -DPIXELICA_BUILD_2D=ON
+          -DPIXELICA_WARNINGS_AS_ERRORS=ON -DPIXELICA_REQUIRE_PYTHON=ON
+      - run: cmake --build build-2d --config Release --parallel
+      - run: ctest --test-dir build-2d -C Release --output-on-failure
+      - name: Common only (both engines OFF) - configure, build, test
+        run: >
+          cmake -S . -B build-common -DCMAKE_BUILD_TYPE=Release
+          -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_BUILD_3D=OFF -DPIXELICA_BUILD_2D=OFF
+          -DPIXELICA_WARNINGS_AS_ERRORS=ON -DPIXELICA_REQUIRE_PYTHON=ON
+      - run: cmake --build build-common --config Release --parallel
+      - run: ctest --test-dir build-common -C Release --output-on-failure
+
+  # tools/package_sdk.py: builds Debug + Release once with both engines ON and
+  # writes two separate, freshly staged ZIP SDKs (Pixelica2D = common + renderer2d,
+  # Pixelica = core + hybrid) with SHA256 manifests. Only this script's own
+  # self-checks run here; no archive is published.
+  package-sdk:
+    name: package SDK archives / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Script unit tests (arguments, archive members, manifest)
+        run: python -B -I -m unittest discover -s tools/tests -p "test_package_sdk*.py" -v
+        env:
+          PIXELICA_TOOLS_DIR: ${{ github.workspace }}/tools
+      - name: Build and package the 2D and 3D SDK archives
+        run: python -B tools/package_sdk.py --build-dir ${{ runner.temp }}/pixelica-package-build --output-dir ${{ runner.temp }}/pixelica-package-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixelica-sdk-${{ matrix.os }}
+          path: ${{ runner.temp }}/pixelica-package-out/*
+          if-no-files-found: error
+
+  # Explicit, documented SDK flow: install, then build the INSTALLED copy of the
+  # starter template against the INSTALLED package from a separate directory.
+  # 3D renderer only here (explicit 2D OFF): the 2D SDK flow is package-sdk above.
+  sdk-package:
+    name: sdk package / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build Pixelica (Release, headless, 3D only, no examples/tests)
+        run: >
+          cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release
+          -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_BUILD_3D=ON -DPIXELICA_BUILD_2D=OFF
+          -DPIXELICA_BUILD_EXAMPLES=OFF -DPIXELICA_BUILD_TESTS=OFF
+      - run: cmake --build build-sdk --config Release --parallel
+      - name: Install
+        run: cmake --install build-sdk --config Release --prefix sdk-prefix
+      - name: Configure the installed template against the installed package
+        run: >
+          cmake -S sdk-prefix/share/Pixelica/template -B build-game
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH=${{ github.workspace }}/sdk-prefix
+          -DPIXELICA_GAME_STRICT_WARNINGS=ON
+      - run: cmake --build build-game --config Release --parallel
+      - run: ctest --test-dir build-game -C Release --output-on-failure
+
+  # SDL3 platform. SDL 3.4.18 is built from the official release tarball
+  # (SHA256-verified by CMake FetchContent).
+  sdl3:
+    name: sdl3 / ${{ matrix.os }} / ${{ matrix.config }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install SDL build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libegl1-mesa-dev \
+            libasound2-dev libudev-dev libdbus-1-dev
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+          -DPIXELICA_PLATFORM=SDL3 -DPIXELICA_FETCH_SDL3=ON
+          -DPIXELICA_BUILD_3D=ON -DPIXELICA_BUILD_2D=ON
+          -DPIXELICA_WARNINGS_AS_ERRORS=ON
+          -DPIXELICA_REQUIRE_PYTHON=ON
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+      - name: Test (unit tests + --hidden smoke runs on the SDL dummy video driver)
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
+
+  # AddressSanitizer + UndefinedBehaviorSanitizer on the Linux headless build with
+  # BOTH engines (3D core, 2D renderer, hybrid) and the optional rig modules.
+  # Sanitizers are not applied to the SDL source built by FetchContent. The
+  # installed-SDK test is not registered with PIXELICA_SANITIZE=ON by design.
+  sanitizers-linux:
+    name: asan+ubsan / ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Optional skeleton/IK modules ON so their tests run under ASan+UBSan too.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_SANITIZE=ON
+          -DPIXELICA_BUILD_3D=ON -DPIXELICA_BUILD_2D=ON
+          -DPIXELICA_REQUIRE_PYTHON=ON
+          -DPIXELICA_BUILD_SKELETON=ON
+          -DPIXELICA_BUILD_IK=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ctest --test-dir build --output-on-failure
+
+  # OPTIONAL. Cross-compiles the headless build for linux/aarch64 and runs the C
+  # tests under qemu-user. This checks that the portable code builds and behaves
+  # on arm64 under emulation; it is NOT a Raspberry Pi test and says nothing
+  # about Pi hardware or performance.
+  arm64-cross:
+    name: arm64 cross + qemu (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchain and qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build gcc-aarch64-linux-gnu qemu-user
+      - name: Configure
+        run: >
+          cmake -S . -B build-arm64 -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu.cmake
+          -DCMAKE_BUILD_TYPE=Release -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_WARNINGS_AS_ERRORS=ON
+      - run: cmake --build build-arm64 --parallel
+      - run: ctest --test-dir build-arm64 --output-on-failure
+
+  # OPTIONAL. Compiles firmware/esp32p4 with ESP-IDF v6.0 in Espressif's Docker
+  # image (headless smoke configuration, target esp32p4). The image tag has not
+  # been verified to exist or to build this project. A successful compile would
+  # still not prove anything about a board: it never runs on hardware.
+  esp-idf-compile:
+    name: esp-idf v6.0 compile, esp32p4 (optional, unverified)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container:
+      image: espressif/idf:v6.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build firmware/esp32p4
+        working-directory: firmware/esp32p4
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py set-target esp32p4
+          idf.py build

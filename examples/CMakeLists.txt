@@ -1,0 +1,253 @@
+# Examples use only the public API (include/pixelica and the module headers).
+#
+#   3D examples (PIXELICA_BUILD_3D)  hello_triangle, hello_cube, hello_animation,
+#                               hello_rig (both rig modules), Pixel Room. Their
+#                               platform lifecycle, main() and frame loop live in
+#                               a driver library chosen by PIXELICA_PLATFORM.
+#   2D examples (PIXELICA_BUILD_2D)  hello_2d, hello_isometric, driven by the small
+#                               examples/common2d runner (no 3D renderer).
+#   hybrid example (both)       hello_25d, on the same PIXELICA_Game runner as the 3D
+#                               examples, using pixelica/hybrid.h.
+#
+# Adds an example whose sources are every .c file of examples/<name>/.
+#   DRIVER  driver library providing main() (linked directly: an OBJECT library)
+#   LIBS    further libraries
+function(pixelica_add_guarded_example name)
+  cmake_parse_arguments(ARG "" "" "DRIVER;LIBS" ${ARGN})
+  file(GLOB example_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${name}/*.c")
+  list(SORT example_sources)
+  if(NOT example_sources)
+    message(FATAL_ERROR "Pixelica: enabled example ${name} has no source in examples/${name}/")
+  endif()
+  add_executable(${name} ${example_sources})
+  target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/${name}")
+  target_link_libraries(${name} PRIVATE ${ARG_DRIVER} ${ARG_LIBS} pixelica_options)
+  set_target_properties(${name} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+  if(BUILD_TESTING)
+    add_test(NAME smoke_${name} COMMAND ${name} --frames 30 --hidden)
+    set_tests_properties(smoke_${name} PROPERTIES LABELS "smoke" TIMEOUT 60)
+  endif()
+endfunction()
+
+# Same online module and game simulation in every profile. The optional 2D
+# renderer supplies the arena; without it the demo is a console bot/client.
+if(PIXELICA_BUILD_ONLINE)
+  add_executable(hello_online hello_online/main.c hello_online/online_game.c hello_online/online_session.c)
+  target_link_libraries(hello_online PRIVATE pixelica_online pixelica_options)
+  if(PIXELICA_BUILD_2D)
+    target_sources(hello_online PRIVATE hello_online/online_view.c)
+    target_compile_definitions(hello_online PRIVATE HELLO_ONLINE_WITH_RENDERER2D=1)
+    target_include_directories(hello_online PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/common2d")
+    target_link_libraries(hello_online PRIVATE pixelica_renderer2d)
+    if(PIXELICA_PLATFORM STREQUAL "SDL3")
+      target_compile_definitions(hello_online PRIVATE HELLO_ONLINE_SDL=1)
+      target_link_libraries(hello_online PRIVATE pixelica_platform_sdl3)
+    endif()
+  endif()
+  set_target_properties(hello_online PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+  add_executable(hello_online_headless hello_online/main.c hello_online/online_game.c hello_online/online_session.c)
+  target_link_libraries(hello_online_headless PRIVATE pixelica_online pixelica_options)
+  set_target_properties(hello_online_headless PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+  if(BUILD_TESTING)
+    add_executable(hello_online_game_test hello_online/online_game_test.c hello_online/online_game.c)
+    target_link_libraries(hello_online_game_test PRIVATE pixelica_common pixelica_options)
+    add_test(NAME online_game_logic COMMAND hello_online_game_test)
+    set_tests_properties(online_game_logic PROPERTIES LABELS "online;unit")
+  endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# 3D examples
+# ---------------------------------------------------------------------------
+if(PIXELICA_BUILD_3D)
+  add_library(pixelica_game_runner STATIC common/game_runner.c)
+  target_link_libraries(pixelica_game_runner PUBLIC pixelica_core PRIVATE pixelica_options)
+
+  # OBJECT library so main() is always linked into the executable.
+  if(PIXELICA_PLATFORM STREQUAL "SDL3")
+    add_library(pixelica_example_driver OBJECT
+      "${PROJECT_SOURCE_DIR}/platforms/sdl3/main_sdl3.c")
+    target_link_libraries(pixelica_example_driver
+      PUBLIC pixelica_game_runner pixelica_platform_sdl3
+      PRIVATE pixelica_options)
+  else()
+    add_library(pixelica_example_driver OBJECT common/main_headless.c)
+    target_link_libraries(pixelica_example_driver
+      PUBLIC pixelica_game_runner
+      PRIVATE pixelica_options)
+  endif()
+
+  function(pixelica_add_example name)
+    add_executable(${name} ${name}/${name}.c)
+    target_link_libraries(${name} PRIVATE pixelica_example_driver pixelica_options)
+    # Put executables at the top of the build tree (<build>/hello_cube, or
+    # <build>/Debug/hello_cube.exe for multi-config generators, which append the
+    # configuration name), as documented in the README.
+    set_target_properties(${name} PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+    if(BUILD_TESTING)
+      # Smoke run: exits 0 after N frames. Under SDL3 this uses the dummy video
+      # driver and software renderer, so it proves the program runs, not how it looks.
+      add_test(NAME smoke_${name} COMMAND ${name} --frames 30 --hidden)
+      set_tests_properties(smoke_${name} PROPERTIES LABELS "smoke" TIMEOUT 60)
+    endif()
+  endfunction()
+
+  pixelica_add_example(hello_triangle)
+  pixelica_add_example(hello_cube)
+  pixelica_add_example(hello_animation)
+
+  # hello_rig combines BOTH optional modules (soft skinning + two-bone IK), so it
+  # only exists when both are enabled; neither module requires the other.
+  if(PIXELICA_BUILD_SKELETON AND PIXELICA_BUILD_IK)
+    pixelica_add_example(hello_rig)
+    target_link_libraries(hello_rig PRIVATE pixelica_skeleton pixelica_ik)
+  endif()
+
+  # hello_25d: 3D mesh + depth-tested 2D billboards/HUD through pixelica/hybrid.h, on
+  # the same PIXELICA_Game runner as the examples above.
+  if(PIXELICA_ENABLE_HYBRID)
+    pixelica_add_guarded_example(hello_25d
+      DRIVER pixelica_example_driver
+      LIBS pixelica_hybrid pixelica_renderer2d pixelica_core)
+  endif()
+
+  # -------------------------------------------------------------------------
+  # Pixel Room
+  #
+  #   pixel_room_core      portable game logic (no platform, no embedded data);
+  #                        test_pixel_room links this and builds its own assets.
+  #   pixel_room_embedded  the generated assets/compiled/pixel_room_assets.h as
+  #                        byte arrays (no runtime filesystem dependency).
+  #   pixel_room           STANDARD 256x192 game        (same source, -D sizes)
+  #   pixel_room_tiny      TINY 160x120 game
+  #   pixel_room_capture   headless screenshot / stats / wall-clock benchmark
+  #
+  # The embedded assets are produced by the asset generator, so the executables
+  # only exist once assets/compiled/pixel_room_assets.h does; the glob below
+  # re-runs CMake when it appears.
+  # -------------------------------------------------------------------------
+  add_library(pixel_room_core STATIC
+    pixel_room/pixel_room.c
+    pixel_room/pixel_room_world.c)
+  target_include_directories(pixel_room_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/pixel_room")
+  target_link_libraries(pixel_room_core PUBLIC pixelica_core PRIVATE pixelica_options)
+
+  set(PIXELICA_ROOM_ASSET_DIR "${PROJECT_SOURCE_DIR}/assets/compiled")
+  file(GLOB PIXELICA_ROOM_ASSET_HEADER CONFIGURE_DEPENDS "${PIXELICA_ROOM_ASSET_DIR}/pixel_room_assets.h")
+
+  if(PIXELICA_ROOM_ASSET_HEADER)
+    add_library(pixel_room_embedded STATIC pixel_room/room_embedded.c)
+    target_include_directories(pixel_room_embedded PRIVATE "${PIXELICA_ROOM_ASSET_DIR}")
+    target_link_libraries(pixel_room_embedded PUBLIC pixel_room_core PRIVATE pixelica_options)
+
+    function(pixelica_add_pixel_room name width height)
+      add_executable(${name} pixel_room/pixel_room_game.c)
+      target_compile_definitions(${name} PRIVATE
+        PIXEL_ROOM_WIDTH=${width} PIXEL_ROOM_HEIGHT=${height})
+      target_link_libraries(${name} PRIVATE pixelica_example_driver pixel_room_embedded pixelica_options)
+      set_target_properties(${name} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+      if(BUILD_TESTING)
+        add_test(NAME smoke_${name} COMMAND ${name} --frames 30 --hidden)
+        set_tests_properties(smoke_${name} PROPERTIES LABELS "smoke" TIMEOUT 60)
+      endif()
+    endfunction()
+
+    pixelica_add_pixel_room(pixel_room 256 192)
+    pixelica_add_pixel_room(pixel_room_tiny 160 120)
+
+    # The capture tool (screenshot / JSON / wall-clock benchmark) follows the root
+    # PIXELICA_BUILD_BENCHMARKS option. A root that does not define it keeps the tool.
+    if(NOT DEFINED PIXELICA_BUILD_BENCHMARKS OR PIXELICA_BUILD_BENCHMARKS)
+      add_executable(pixel_room_capture pixel_room/pixel_room_capture.c)
+      target_link_libraries(pixel_room_capture PRIVATE pixel_room_embedded pixelica_options)
+      if(MSVC)
+        # Only this translation unit uses plain fopen (C4996); warnings stay at
+        # /W4 (and /WX when requested) for every other target and diagnostic.
+        target_compile_definitions(pixel_room_capture PRIVATE _CRT_SECURE_NO_WARNINGS)
+      endif()
+      set_target_properties(pixel_room_capture PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+      if(BUILD_TESTING)
+        # Quick, finite: renders one frame per profile and prints the JSON report.
+        add_test(NAME smoke_pixel_room_capture_tiny
+          COMMAND pixel_room_capture --profile tiny --script UP:30,A:2 --json -)
+        add_test(NAME smoke_pixel_room_capture_standard
+          COMMAND pixel_room_capture --profile standard --script UP:30,A:2 --bench 8 --warmup 2
+                  --json -)
+        set_tests_properties(smoke_pixel_room_capture_tiny smoke_pixel_room_capture_standard
+          PROPERTIES LABELS "smoke" TIMEOUT 60)
+      endif()
+    endif()
+  else()
+    message(WARNING
+      "Pixel Room executables are skipped: ${PIXELICA_ROOM_ASSET_DIR}/pixel_room_assets.h does not "
+      "exist yet. Run tools/pixelica_pack/generate_demo_assets.py to create it (CMake re-configures "
+      "automatically once it appears).")
+  endif()
+
+  # test_pixel_room (tests/test_pixel_room.c) is created by the root tests glob, which may run
+  # before or after this directory is processed, so link it when the root file has finished.
+  function(pixelica_link_pixel_room_test)
+    if(TARGET test_pixel_room)
+      target_link_libraries(test_pixel_room PRIVATE pixel_room_core)
+      if(TARGET pixel_room_embedded)
+        target_link_libraries(test_pixel_room PRIVATE pixel_room_embedded)
+        target_compile_definitions(test_pixel_room PRIVATE PIXEL_ROOM_TEST_EMBEDDED=1)
+      endif()
+    endif()
+  endfunction()
+  cmake_language(DEFER DIRECTORY "${PROJECT_SOURCE_DIR}" CALL pixelica_link_pixel_room_test)
+endif()
+
+# ---------------------------------------------------------------------------
+# 2D examples: hello_2d, hello_isometric
+#
+# Runner (examples/common2d): main.c is the driver and implements the
+# `pixelica2d_example_demo` interface of demo2d.h; any further common2d/*.c is shared
+# demo code (atlas data, helpers) built into one static library. With SDL3 the
+# driver is compiled with PIXELICA2D_DEMO_SDL and links the platform layer (PAL only,
+# no 3D); otherwise it is the plain headless driver. No example here links the 3D
+# core.
+# ---------------------------------------------------------------------------
+if(PIXELICA_BUILD_2D)
+  set(PIXELICA2D_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/common2d")
+  file(GLOB PIXELICA2D_COMMON_SOURCES CONFIGURE_DEPENDS "${PIXELICA2D_COMMON_DIR}/*.c")
+  set(PIXELICA2D_DRIVER_SOURCE "${PIXELICA2D_COMMON_DIR}/main.c")
+  list(REMOVE_ITEM PIXELICA2D_COMMON_SOURCES "${PIXELICA2D_DRIVER_SOURCE}")
+  list(SORT PIXELICA2D_COMMON_SOURCES)
+  # Also watch the header so adding it re-configures.
+  file(GLOB PIXELICA2D_DEMO_HEADER CONFIGURE_DEPENDS "${PIXELICA2D_COMMON_DIR}/demo2d.h")
+
+  if(EXISTS "${PIXELICA2D_DRIVER_SOURCE}" AND PIXELICA2D_DEMO_HEADER)
+    if(PIXELICA2D_COMMON_SOURCES)
+      add_library(pixelica2d_example_support STATIC ${PIXELICA2D_COMMON_SOURCES})
+      target_include_directories(pixelica2d_example_support PUBLIC "${PIXELICA2D_COMMON_DIR}")
+      target_link_libraries(pixelica2d_example_support
+        PUBLIC pixelica_renderer2d pixelica_common
+        PRIVATE pixelica_options)
+    endif()
+
+    # OBJECT library so main() is always linked into the executable.
+    add_library(pixelica2d_example_driver OBJECT "${PIXELICA2D_DRIVER_SOURCE}")
+    target_include_directories(pixelica2d_example_driver PUBLIC "${PIXELICA2D_COMMON_DIR}")
+    target_link_libraries(pixelica2d_example_driver
+      PUBLIC pixelica_renderer2d pixelica_common
+      PRIVATE pixelica_options)
+    if(TARGET pixelica2d_example_support)
+      target_link_libraries(pixelica2d_example_driver PUBLIC pixelica2d_example_support)
+    endif()
+    if(PIXELICA_PLATFORM STREQUAL "SDL3")
+      target_compile_definitions(pixelica2d_example_driver PRIVATE PIXELICA2D_DEMO_SDL=1)
+      target_link_libraries(pixelica2d_example_driver PUBLIC pixelica_platform_sdl3)
+    endif()
+
+    pixelica_add_guarded_example(hello_2d DRIVER pixelica2d_example_driver LIBS pixelica_renderer2d)
+    pixelica_add_guarded_example(hello_isometric DRIVER pixelica2d_example_driver LIBS pixelica_renderer2d)
+  else()
+    message(STATUS "Pixelica: 2D examples not built: examples/common2d/main.c and/or "
+                   "examples/common2d/demo2d.h do not exist yet (CMake re-configures once they appear)")
+  endif()
+endif()

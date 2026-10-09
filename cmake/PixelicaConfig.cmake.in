@@ -1,0 +1,41 @@
+@PACKAGE_INIT@
+
+# Pixelica package: find_package(Pixelica CONFIG REQUIRED [COMPONENTS ...])
+#
+# This file is identical in every SDK variant (2D-only, 3D-only, merged): it
+# names no build option. What it can import is decided by which export files
+# exist beside it. All the logic is in PixelicaPackage.cmake.
+#
+# Without COMPONENTS the default is the 3D engine when it is installed:
+#   Pixelica::core        the 3D renderer core (alias Pixelica::renderer3d);
+#                         links Pixelica::common
+# otherwise the 2D renderer, otherwise the common library alone.
+#
+# Components (only the requested ones and their dependencies are imported):
+#   common      Pixelica::common      math, input, animation, asset container,
+#                                     texture loader (no renderer)
+#   core        Pixelica::core        3D renderer core; renderer3d is a synonym
+#   renderer2d  Pixelica::renderer2d  2D renderer (also Pixelica2D::core)
+#   hybrid      Pixelica::hybrid      2.5D module; needs core AND renderer2d, so
+#                                     both SDKs must be installed in one prefix
+#   skeleton    Pixelica::skeleton    optional rig module, needs only common
+#   ik          Pixelica::ik          optional two-bone IK, needs only common
+# A listed REQUIRED component that is missing or unknown fails find_package; a
+# missing OPTIONAL_COMPONENTS entry does not. Pixelica_<component>_FOUND is set
+# for every requested component.
+#
+# Also set: Pixelica_PACK (installed asset tool or ""), Pixelica_TEMPLATE_DIR
+# (3D starter project or ""), Pixelica2D_TEMPLATE_DIR (2D starter project or "").
+#
+# SDL3 is not part of this package. To use the SDL3 window backend, add the
+# Pixelica source tree with add_subdirectory (see docs/sdk.md).
+
+set(_pixelica_pkg_name Pixelica)
+set(_pixelica_pkg_dir "${CMAKE_CURRENT_LIST_DIR}")
+set(_pixelica_pkg_prefix "${PACKAGE_PREFIX_DIR}")
+set(_pixelica_pkg_share "${PACKAGE_PREFIX_DIR}/@PIXELICA_INSTALL_SHAREDIR@")
+include("${CMAKE_CURRENT_LIST_DIR}/PixelicaPackage.cmake")
+unset(_pixelica_pkg_name)
+unset(_pixelica_pkg_dir)
+unset(_pixelica_pkg_prefix)
+unset(_pixelica_pkg_share)

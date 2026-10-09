@@ -1,0 +1,54 @@
+# relay (plain HTTP, internal only) + caddy (public HTTPS).
+#   cp .env.example .env     # set PIXELICA_DOMAIN
+#   docker compose up -d --build
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    # No "ports:" on purpose: the plain-HTTP relay is reachable only from Caddy.
+    environment:
+      # Caddy's fixed address on relay_net; X-Forwarded-For is trusted from it only.
+      PIXELICA_TRUSTED_PROXIES: "172.28.77.2"
+      PIXELICA_DB: /data/online.sqlite3
+    volumes:
+      - relay-data:/data
+    networks:
+      - relay_net
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 256m
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - relay
+    environment:
+      PIXELICA_DOMAIN: ${PIXELICA_DOMAIN:?set PIXELICA_DOMAIN in .env (e.g. relay.example.com)}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      relay_net:
+        ipv4_address: 172.28.77.2
+
+networks:
+  relay_net:
+    ipam:
+      config:
+        - subnet: 172.28.77.0/24
+
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:

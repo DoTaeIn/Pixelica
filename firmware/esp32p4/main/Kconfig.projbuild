@@ -1,0 +1,47 @@
+menu "Pixelica firmware"
+
+    choice PIXELICA_FW_MODE
+        prompt "Run mode"
+        default PIXELICA_FW_MODE_HEADLESS
+        help
+            Headless renders into memory with no LCD and no buttons, so the firmware can be
+            compiled and smoke-run on any ESP32-P4 target without a display. Board mode needs
+            a real LCD and is NOT usable until board_config.c is implemented for the board.
+
+        config PIXELICA_FW_MODE_HEADLESS
+            bool "Headless smoke run (no LCD, no buttons)"
+        config PIXELICA_FW_MODE_BOARD
+            bool "Board: LCD + buttons from main/board_config.c"
+    endchoice
+
+    choice PIXELICA_FW_GAME
+        prompt "Game"
+        default PIXELICA_FW_GAME_HELLO_TRIANGLE
+
+        config PIXELICA_FW_GAME_HELLO_TRIANGLE
+            bool "hello_triangle (fixed 256x192)"
+        config PIXELICA_FW_GAME_PIXEL_ROOM
+            bool "pixel_room (needs assets/compiled/pixel_room_assets.h)"
+    endchoice
+
+    choice PIXELICA_FW_PROFILE
+        prompt "Pixel Room render profile"
+        depends on PIXELICA_FW_GAME_PIXEL_ROOM
+        default PIXELICA_FW_PROFILE_TINY
+
+        config PIXELICA_FW_PROFILE_TINY
+            bool "TINY 160x120"
+        config PIXELICA_FW_PROFILE_STANDARD
+            bool "STANDARD 256x192"
+    endchoice
+
+    config PIXELICA_FW_HEADLESS_FRAMES
+        int "Frames rendered in the headless smoke run"
+        depends on PIXELICA_FW_MODE_HEADLESS
+        range 1 1000000
+        default 120
+        help
+            Each frame advances the simulation by a fixed 16667 us (like --frames on the desktop),
+            then the last frame's FNV-1a hash and the memory/present counters are logged.
+
+endmenu
