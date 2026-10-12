@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "pixelica/renderer2d.h"
+#include "pixelica/draw_options.h"
 
 /* Half-open byte range [lo, hi); an empty range overlaps nothing. */
 typedef struct PIXELICA2D_Mem {
@@ -63,6 +64,13 @@ typedef struct PIXELICA2D_SpriteJob {
     double sx, sy, isx, isy, pivx, pivy, c, s;
     bool rotated;
     PIXELICA2D_Shade shade;
+    /* Opt-in draw options (pixelica2d_draw_sprite_ex with non-NULL options). */
+    bool ex, repeat_u, repeat_v;
+    const uint16_t *tex;
+    const uint8_t *amap; /* NULL = alpha 255 */
+    int32_t tex_w, tex_h, src_x, src_y;
+    int alpha_mode;
+    uint8_t opacity, cutoff;
 } PIXELICA2D_SpriteJob;
 
 /* ---- memory ranges ------------------------------------------------------ */
@@ -323,8 +331,10 @@ static void pixelica2d_box(double lo, double hi, int32_t clip_lo, int32_t clip_h
 
 /* ---- sprites ------------------------------------------------------------ */
 
+/* `relaxed` (draw_sprite_ex with options): only width/height > 0 are required of
+ * the source rectangle; the sampler wraps or clamps absolute texel coordinates. */
 static int pixelica2d_sprite_prepare(const PIXELICA2D_Target *t, const PIXELICA2D_Sprite *sprite, const PIXELICA2D_Mem *scratch,
-                                PIXELICA2D_SpriteJob *job)
+                                PIXELICA2D_SpriteJob *job, int relaxed)
 {
     PIXELICA2D_Sprite sp;
     PIXELICA_Texture tex;
@@ -338,15 +348,23 @@ static int pixelica2d_sprite_prepare(const PIXELICA2D_Target *t, const PIXELICA2
         return 0;
     }
     r = sp.source;
-    if (r.x < 0 || r.y < 0 || r.width <= 0 || r.height <= 0 || (int64_t)r.x + r.width > tex.width ||
-        (int64_t)r.y + r.height > tex.height || !pixelica2d_finite2(sp.position) || !pixelica2d_finite2(sp.scale) ||
+    if (r.width <= 0 || r.height <= 0 ||
+        (!relaxed && (r.x < 0 || r.y < 0 || (int64_t)r.x + r.width > tex.width ||
+                      (int64_t)r.y + r.height > tex.height)) ||
+        !pixelica2d_finite2(sp.position) || !pixelica2d_finite2(sp.scale) ||
         !pixelica2d_finite2(sp.pivot) || !isfinite(sp.rotation) || sp.scale.x == 0.0f || sp.scale.y == 0.0f ||
         !pixelica2d_shade(t, sp.depth, sp.opacity, sp.color_key_enabled, sp.color_key, sp.depth_test,
                      sp.depth_write, &job->shade)) {
         return 0;
     }
     job->tex_stride = (size_t)tex.width;
-    job->texels = tex.pixels + (size_t)r.y * job->tex_stride + (size_t)r.x;
+    job->texels = relaxed ? tex.pixels : tex.pixels + (size_t)r.y * job->tex_stride + (size_t)r.x;
+    job->ex = false;
+    job->tex = tex.pixels;
+    job->tex_w = (int32_t)tex.width;
+    job->tex_h = (int32_t)tex.height;
+    job->src_x = r.x;
+    job->src_y = r.y;
     job->src_w = (double)r.width;
     job->src_h = (double)r.height;
     job->zoom = (double)t->camera.zoom;
@@ -365,6 +383,64 @@ static int pixelica2d_sprite_prepare(const PIXELICA2D_Target *t, const PIXELICA2
     return 1;
 }
 
+static uint32_t pixelica2d_mul255(uint32_t a, uint32_t b)
+{
+    return (a * b + 127u) / 255u;
+}
+
+/* Repeat (floor modulo, no overflow) or clamp an absolute texel coordinate. */
+static size_t pixelica2d_wrap(int64_t a, int32_t n, bool repeat)
+{
+    if (repeat) {
+        int64_t m = a % (int64_t)n;
+
+        return (size_t)(m < 0 ? m + n : m);
+    }
+    return (size_t)(a < 0 ? 0 : (a >= n ? (int64_t)n - 1 : a));
+}
+
+/* Plot the source texel at local source coordinate (u, v), 0 <= u < src_w. */
+static void pixelica2d_sprite_plot(const PIXELICA2D_SpriteJob *j, uint16_t *c, uint16_t *d, double u, double v,
+                                   uint64_t *written)
+{
+    const PIXELICA2D_Shade *sh = &j->shade;
+    size_t idx;
+    uint16_t src;
+    uint32_t a;
+
+    if (!j->ex) {
+        pixelica2d_plot(sh, c, d, j->texels[(size_t)v * j->tex_stride + (size_t)u], written);
+        return;
+    }
+    idx = pixelica2d_wrap((int64_t)j->src_y + (int64_t)v, j->tex_h, j->repeat_v) * (size_t)j->tex_w +
+          pixelica2d_wrap((int64_t)j->src_x + (int64_t)u, j->tex_w, j->repeat_u);
+    src = j->tex[idx];
+    if (j->alpha_mode == PIXELICA_ALPHA_OPAQUE) {
+        pixelica2d_plot(sh, c, d, src, written);
+        return;
+    }
+    if (sh->keyed && src == sh->key) {
+        return;
+    }
+    a = j->amap != NULL ? j->amap[idx] : 255u;
+    a = pixelica2d_mul255(pixelica2d_mul255(a, j->opacity), (uint32_t)sh->alpha);
+    if (j->alpha_mode == PIXELICA_ALPHA_TEST ? a < j->cutoff : a == 0u) {
+        return;
+    }
+    if (sh->test && !(sh->depth < *d)) {
+        return;
+    }
+    if (j->alpha_mode == PIXELICA_ALPHA_TEST) {
+        *c = src;
+        if (sh->write) {
+            *d = sh->depth;
+        }
+    } else {
+        *c = a == 255u ? src : pixelica2d_blend(src, *c, a);
+    }
+    ++*written;
+}
+
 /*
  * screen = (R * S * (local - pivot) + position - camera) * zoom, R turning
  * clockwise on a y-down screen. Inverse per pixel center:
@@ -376,7 +452,7 @@ static void pixelica2d_sprite_draw(const PIXELICA2D_Target *t, const PIXELICA2D_
     int32_t y0 = t->clip.y, y1 = t->clip.y + t->clip.height;
     int32_t x, y;
 
-    if (j->shade.alpha == 0u) {
+    if (j->shade.alpha == 0u && !(j->ex && j->alpha_mode == PIXELICA_ALPHA_TEST)) {
         return;
     }
     if (!j->rotated) {
@@ -387,19 +463,17 @@ static void pixelica2d_sprite_draw(const PIXELICA2D_Target *t, const PIXELICA2D_
         pixelica2d_axis_span(&ay, &y0, &y1);
         for (y = y0; y < y1; ++y) {
             double v = pixelica2d_axis_at(&ay, y);
-            const uint16_t *src;
             uint16_t *crow = pixelica2d_color_row(t, y);
             uint16_t *drow = pixelica2d_depth_row(t, y);
 
             if (!(v >= 0.0 && v < j->src_h)) {
                 continue;
             }
-            src = j->texels + (size_t)v * j->tex_stride;
             for (x = x0; x < x1; ++x) {
                 double u = pixelica2d_axis_at(&ax, x);
 
                 if (u >= 0.0 && u < j->src_w) {
-                    pixelica2d_plot(&j->shade, crow + x, drow != NULL ? drow + x : NULL, src[(size_t)u], written);
+                    pixelica2d_sprite_plot(j, crow + x, drow != NULL ? drow + x : NULL, u, v, written);
                 }
             }
         }
@@ -431,8 +505,7 @@ static void pixelica2d_sprite_draw(const PIXELICA2D_Target *t, const PIXELICA2D_
                 double v = (j->c * qy - j->s * qx) * j->isy + j->pivy;
 
                 if (u >= 0.0 && u < j->src_w && v >= 0.0 && v < j->src_h) {
-                    pixelica2d_plot(&j->shade, crow + x, drow != NULL ? drow + x : NULL,
-                               j->texels[(size_t)v * j->tex_stride + (size_t)u], written);
+                    pixelica2d_sprite_plot(j, crow + x, drow != NULL ? drow + x : NULL, u, v, written);
                 }
             }
         }
@@ -598,9 +671,67 @@ PIXELICA_Status pixelica2d_draw_sprite(PIXELICA2D_Context *ctx, const PIXELICA2D
     PIXELICA2D_SpriteJob job;
     uint64_t written = 0u;
 
-    if (!pixelica2d_target(ctx, &t) || !pixelica2d_sprite_prepare(&t, sprite, NULL, &job)) {
+    if (!pixelica2d_target(ctx, &t) || !pixelica2d_sprite_prepare(&t, sprite, NULL, &job, 0)) {
         return PIXELICA_ERR_INVALID_ARG;
     }
+    pixelica2d_sprite_draw(&t, &job, &written);
+    pixelica2d_account(ctx, 1u, written);
+    return PIXELICA_OK;
+}
+
+PIXELICA_Status pixelica2d_draw_sprite_ex(PIXELICA2D_Context *ctx, const PIXELICA2D_Sprite *sprite,
+                                          const PIXELICA_DrawOptions *options)
+{
+    PIXELICA2D_Target t;
+    PIXELICA2D_SpriteJob job;
+    PIXELICA_DrawOptions o;
+    PIXELICA2D_Sprite sp;
+    PIXELICA2D_Mem mem;
+    uint64_t written = 0u;
+
+    if (options == NULL) {
+        return pixelica2d_draw_sprite(ctx, sprite);
+    }
+    if (sprite == NULL || !pixelica2d_target(ctx, &t) ||
+        !pixelica2d_mem(options, 1u, sizeof *options, &mem) || pixelica2d_hits(&t, mem, NULL)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    o = *options;
+    if ((int)o.wrap_u != (int)PIXELICA_WRAP_CLAMP && (int)o.wrap_u != (int)PIXELICA_WRAP_REPEAT) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    if ((int)o.wrap_v != (int)PIXELICA_WRAP_CLAMP && (int)o.wrap_v != (int)PIXELICA_WRAP_REPEAT) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    if ((int)o.alpha_mode < (int)PIXELICA_ALPHA_OPAQUE || (int)o.alpha_mode > (int)PIXELICA_ALPHA_BLEND) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    sp = *sprite;
+    if (o.alpha_mode == PIXELICA_ALPHA_BLEND) {
+        sp.depth_write = false;
+    }
+    if (!pixelica2d_sprite_prepare(&t, &sp, NULL, &job, 1)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    if (o.texture_alpha == NULL) {
+        if (o.texture_alpha_bytes != 0u) {
+            return PIXELICA_ERR_INVALID_ARG;
+        }
+    } else {
+        uint64_t need = (uint64_t)job.tex_w * (uint64_t)job.tex_h;
+
+        if ((uint64_t)o.texture_alpha_bytes < need || !pixelica2d_mem(o.texture_alpha, need, 1u, &mem) ||
+            pixelica2d_hits(&t, mem, NULL)) {
+            return PIXELICA_ERR_INVALID_ARG;
+        }
+    }
+    job.ex = true;
+    job.repeat_u = o.wrap_u == PIXELICA_WRAP_REPEAT;
+    job.repeat_v = o.wrap_v == PIXELICA_WRAP_REPEAT;
+    job.amap = o.texture_alpha;
+    job.alpha_mode = (int)o.alpha_mode;
+    job.opacity = o.opacity;
+    job.cutoff = o.alpha_cutoff;
     pixelica2d_sprite_draw(&t, &job, &written);
     pixelica2d_account(ctx, 1u, written);
     return PIXELICA_OK;
@@ -683,7 +814,7 @@ PIXELICA_Status pixelica2d_draw_list(PIXELICA2D_Context *ctx, const PIXELICA2D_I
         return PIXELICA_ERR_INVALID_ARG;
     }
     for (i = 0; i < count; ++i) {
-        if (!isfinite(items[i].sort_y) || !pixelica2d_sprite_prepare(&t, &items[i].sprite, &order_mem, &job)) {
+        if (!isfinite(items[i].sort_y) || !pixelica2d_sprite_prepare(&t, &items[i].sprite, &order_mem, &job, 0)) {
             return PIXELICA_ERR_INVALID_ARG;
         }
     }
@@ -702,7 +833,7 @@ PIXELICA_Status pixelica2d_draw_list(PIXELICA2D_Context *ctx, const PIXELICA2D_I
     /* Nothing read here was written since validation, so this re-prepare
      * cannot fail; checking it keeps the draw path self-contained. */
     for (i = 0; i < count; ++i) {
-        if (pixelica2d_sprite_prepare(&t, &items[order[i]].sprite, NULL, &job)) {
+        if (pixelica2d_sprite_prepare(&t, &items[order[i]].sprite, NULL, &job, 0)) {
             pixelica2d_sprite_draw(&t, &job, &written);
         }
     }

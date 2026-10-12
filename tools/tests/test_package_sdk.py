@@ -55,7 +55,17 @@ class DocumentLayoutTests(unittest.TestCase):
 # --- synthetic SDK file lists ------------------------------------------------
 COMMON_FILES = (
     ["include/pixelica/" + h for h in ps.COMMON_HEADERS]
-    + ["lib/libpixelica_common.a", "lib/libpixelica_commond.a",
+    + ["share/Pixelica/docs/" + name for name in ("save.md", "screens.md", "i18n.md", "texture_options.md", "camera.md", "debug.md", "chunks.md", "material_layers.md", "framebuffer.md", "render_effects.md")]
+    + ["share/Pixelica/tools/pixelica_font.py"]
+    + ["include/pixelica/ui.h", "lib/libpixelica_ui.a", "lib/libpixelica_uid.a",
+       "lib/cmake/PixelicaUI/PixelicaUIConfig.cmake",
+       "lib/cmake/PixelicaUI/PixelicaUIConfigVersion.cmake",
+       "lib/cmake/PixelicaUI/PixelicaUITargets.cmake",
+       "lib/cmake/PixelicaUI/PixelicaUITargets-debug.cmake",
+       "lib/cmake/PixelicaUI/PixelicaUITargets-release.cmake",
+       "share/Pixelica/docs/ui.md", "share/Pixelica/examples/hello_ui/CMakeLists.txt",
+       "share/Pixelica/examples/hello_ui/main.c",
+       "lib/libpixelica_common.a", "lib/libpixelica_commond.a",
        "lib/cmake/Pixelica/PixelicaConfig.cmake",
        "lib/cmake/Pixelica/PixelicaConfigVersion.cmake",
        "lib/cmake/Pixelica/PixelicaPackage.cmake",
@@ -289,6 +299,14 @@ class PolicyTests(unittest.TestCase):
     def test_unknown_variant(self):
         self.assertTrue(ps.check_variant_files("Pixelica4D", FILES_2D))
 
+    def test_ui_is_required_in_both_base_sdks(self):
+        for variant, files in (("Pixelica2D", FILES_2D), ("Pixelica3D", FILES_3D)):
+            for removed in ("include/pixelica/ui.h", "lib/cmake/PixelicaUI/PixelicaUIConfig.cmake",
+                            "share/Pixelica/examples/hello_ui/main.c"):
+                with self.subTest(variant=variant, missing=removed):
+                    self.assertTrue(ps.check_variant_files(variant, [p for p in files if p != removed]))
+            self.assertTrue(ps.check_variant_files(variant, [p for p in files if "libpixelica_ui" not in p]))
+
 
 def make_stage(root, files, content=lambda rel: ("data of %s\n" % rel).encode()):
     for rel in files:
@@ -357,6 +375,7 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(manifest["version"], "0.1.0")
         self.assertEqual(manifest["archive_root"], "Pixelica-0.1.0")
         self.assertEqual(manifest["install_components"], ["common", "renderer2d"])
+        self.assertIn("find_package(PixelicaUI CONFIG)", manifest["package_configs"])
         self.assertEqual(manifest["missing_documents"], ["docs/2d.md"])
         self.assertEqual([e["path"] for e in manifest["files"]], sorted(files))
         for entry in manifest["files"]:
@@ -458,7 +477,7 @@ class PlanTests(unittest.TestCase):
         configure = [s for s in steps if s.description.startswith("configure")][0]
         for option in ("-DPIXELICA_PLATFORM=HEADLESS", "-DPIXELICA_BUILD_3D=ON", "-DPIXELICA_BUILD_2D=ON",
                        "-DPIXELICA_BUILD_EXAMPLES=OFF", "-DPIXELICA_BUILD_TESTS=OFF", "-DPIXELICA_BUILD_SKELETON=OFF",
-                       "-DPIXELICA_BUILD_IK=OFF", "-DPIXELICA_INSTALL=ON", "-DPIXELICA_WARNINGS_AS_ERRORS=ON"):
+                       "-DPIXELICA_BUILD_IK=OFF", "-DPIXELICA_BUILD_AUDIO=OFF", "-DPIXELICA_INSTALL=ON", "-DPIXELICA_WARNINGS_AS_ERRORS=ON"):
             self.assertIn(option, configure.argv)
         for step in steps:
             if step.description.startswith("build"):

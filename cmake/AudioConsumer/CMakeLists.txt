@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.21)
+project(AudioConsumer LANGUAGES C)
+if(AUDIO_SDK_SDL)
+  find_package(Pixelica CONFIG REQUIRED COMPONENTS audio_sdl3)
+else()
+  find_package(Pixelica CONFIG REQUIRED COMPONENTS audio)
+endif()
+if(TARGET Pixelica::core OR TARGET Pixelica::renderer2d OR TARGET Pixelica::online)
+  message(FATAL_ERROR "Audio unexpectedly imported another optional subsystem")
+endif()
+add_executable(audio_consumer main.c)
+target_link_libraries(audio_consumer PRIVATE Pixelica::audio)
+if(AUDIO_SDK_SDL)
+  target_compile_definitions(audio_consumer PRIVATE AUDIO_SDK_SDL=1)
+  target_link_libraries(audio_consumer PRIVATE Pixelica::audio_sdl3)
+endif()
+if(WIN32 AND AUDIO_SDK_SDL)
+  add_custom_command(TARGET audio_consumer POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E
+      $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:audio_consumer>>,copy_if_different,true>
+      $<TARGET_RUNTIME_DLLS:audio_consumer> $<TARGET_FILE_DIR:audio_consumer>
+    COMMAND_EXPAND_LISTS)
+endif()
+enable_testing()
+add_test(NAME audio_consumer COMMAND audio_consumer)
+set_tests_properties(audio_consumer PROPERTIES ENVIRONMENT "SDL_AUDIO_DRIVER=dummy;SDL_AUDIODRIVER=dummy")

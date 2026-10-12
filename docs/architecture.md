@@ -44,11 +44,14 @@ usage and `DIMENSIONS_AUDIT.md` (local-only record) for the verification record)
 ```text
 Pixelica::common    src/math/mat4.c, input/input.c, animation/animation.c, assets/container.c, assets/texture_asset.c
                     headers: status input platform math animation image assets_common      (no renderer, no context)
+Pixelica::ui        modules/ui, always built/bundled; links common, no renderer/SDL/heap
 Pixelica::core      the other src/ files (renderer, context, scene, mesh/cart)    links common PUBLIC  (alias renderer3d)
 Pixelica::renderer2d  modules/renderer2d  (alias Pixelica2D::core)               links common, NO 3D code, NO 3D headers
 Pixelica::hybrid    modules/hybrid        needs core AND renderer2d (built only when both engines are on)
 skeleton, ik        modules/*             link common (mathematical, still default OFF)
 input_manager       modules/input_manager links common only, default OFF, shared by 2D and 3D (no renderer, no SDL)
+audio               modules/audio        links common only, default OFF, caller-owned mixer and borrowed PCM/WAV
+audio_sdl3          platforms/sdl3        optional audio output, needs audio + SDL3; game-thread queue pump
 pixelica_platform_sdl3   PAL only; links common, so it also serves 2D-only builds
 ```
 
@@ -59,11 +62,11 @@ pixelica_platform_sdl3   PAL only; links common, so it also serves 2D-only build
   `present_rgb565` per frame. There is no `PIXELICA_Context`, no begin/end-frame protocol and no hidden draw queue in 2D.
 - **2.5D frame loop**: `pixelica_begin_frame` -> meshes -> `pixelica2d_bind_3d` -> `pixelica25d_draw_billboard` / HUD -> `pixelica_end_frame` (the only present).
   The 2D view is a borrow of the 3D buffers and must not outlive the frame; its output struct must be disjoint from the whole 3D engine
-  allocation (context, framebuffers, arena, guards) or the bind is rejected without writes. Statistics stay separate: 3D `PIXELICA_FrameStats` vs `PIXELICA2D_Stats`.
+  allocation (context, framebuffers, arena, coverage bitmap, guards) or the bind is rejected without writes. Statistics stay separate: 3D `PIXELICA_FrameStats` vs `PIXELICA2D_Stats`.
   A billboard has one depth for the whole sprite and mirrors by the sign of its appearance `scale.x/y`; mesh and billboard depths share the
   nominal 0..65534 quantization but can differ by about a unit at boundaries (float vs double), so exact coplanar equality is not guaranteed.
 - Build profiles: `PIXELICA_BUILD_3D` (default ON) and `PIXELICA_BUILD_2D` (ON at top level, OFF as a subproject) select which pieces exist; both OFF
-  builds only common. SDK archives (`tools/package_sdk.py`): Pixelica2D (common + renderer2d) and Pixelica (core + hybrid, which includes common); extracting
+  builds common and UI. SDK archives (`tools/package_sdk.py`): Pixelica2D (common + UI + renderer2d) and Pixelica3D (core + hybrid, which includes common + UI); extracting
   both into one prefix enables `hybrid` when version, compiler, architecture and configuration ABI match. Skeleton and IK are independent, default OFF
   and not in either base archive. On ESP32-P4 the 2D path is CPU software rendering that is compiled only; no board run and no frame rate exists.
 - Demos: `examples/common2d` (runner `main.c`, `demo2d.h` interface, `demo_art.h` generated pixel art) for `hello_2d` and `hello_isometric`;
@@ -74,6 +77,7 @@ pixelica_platform_sdl3   PAL only; links common, so it also serves 2D-only build
 | Target | Contents | Depends on |
 |---|---|---|
 | `pixelica_common` (`Pixelica::common`) | 5 sources listed in `PIXELICA_COMMON_SOURCE_NAMES` | libm on Unix; build-only warning flags |
+| `pixelica_ui` (`Pixelica::ui`), always built | `modules/ui/`: input state, layout, RGB565 widgets, font, PAL presenter | `pixelica_common` |
 | `pixelica_core` (`Pixelica::core`, `Pixelica::renderer3d`) | 7 sources listed in `PIXELICA_RENDERER3D_SOURCE_NAMES` | `pixelica_common` |
 | `pixelica_renderer2d` (`Pixelica::renderer2d`, installed `Pixelica2D::core`) | `modules/renderer2d/renderer2d.c` | `pixelica_common` |
 | `pixelica_hybrid` (`Pixelica::hybrid`) | `modules/hybrid/hybrid.c` | `pixelica_core`, `pixelica_renderer2d` |
@@ -165,7 +169,11 @@ Fixed by `include/pixelica/math.h` and `include/pixelica/renderer.h`; summarized
   HiDPI scaling is left to the OS.
 - ESP32-P4 and Raspberry Pi: the ESP32-P4 firmware compiles with ESP-IDF v6.0 but neither target has run on
   hardware, so there is no hardware performance figure. Desktop CPU render timings are in the README.
-- No audio, editor, glTF, GPU renderer, or dynamic game loading.
+- Optional audio supports PCM WAV (8/16-bit mono/stereo), 16 voices, resampling, buses, pan and sample-timed fades.
+  The portable mixer allocates nothing; the SDL output adapter owns device/file resources and queues audio on the game thread.
+  Call its update each frame; long stalls may underrun and controls affect future mixed samples (queued output has latency).
+  Compressed formats, disk streaming, spatial acoustics and board I2S drivers are not implemented. See [`audio.md`](audio.md).
+- No editor, glTF, GPU renderer, or dynamic game loading.
 
 ## Verification
 
@@ -173,3 +181,51 @@ Verification results live in the audit records (`G0_AUDIT.md` (local-only record
 `REMAINING_AUDIT.md` (local-only record) for the rest) and are summarized in the README.
 The images in `docs/verification/` are exports of the engine's framebuffer, not window screenshots.
 The 2D / 2.5D extension is recorded in `DIMENSIONS_AUDIT.md` (local-only record); the statements above about earlier 3D work are unchanged.
+
+### 선택 파티클
+
+`modules/particles/particles.c`는 common만 의존하는 호출자 소유 고정 풀 시뮬레이션입니다.
+`particles2d.c`는 renderer2d, `particles25d.c`는 hybrid 위의 출력 어댑터이며 각각 별도 타깃·컴포넌트입니다.
+기본값 OFF이며 기본 엔진 헤더·아카이브로 편입하지 않습니다. 3D 빌보드는 기존의
+깊이 버퍼와 RGB565 알파 합성을 재사용합니다. GPU나 추가 렌더링 파이프라인은 필요하지 않습니다.
+설치 ZIP과 소스 ZIP은 `tools/package_particles.py`가 기본 SDK와 별도로 생성합니다.
+
+## 선택 CPU 쉐이더
+
+`modules/shaders`는 RGB565 표면을 처리하는 렌더러 독립 모듈입니다. `Pixelica::common`만 연결하며
+기본 옵션 `PIXELICA_BUILD_SHADERS=OFF`에서는 헤더·라이브러리·설치 설정을 만들지 않습니다.
+포인트 효과는 제자리 연산, 이웃 픽셀을 읽는 효과는 호출자가 제공한 프레임 크기의 스냅샷을 사용합니다.
+사용자 콜백도 변경되지 않는 원본을 읽으므로 픽셀 순회 순서가 결과를 바꾸지 않습니다.
+
+2D는 소유한 표면에 직접 적용합니다. 3D·하이브리드는 `PIXELICA_ShaderPresenter`가 PAL 출력 앞에서
+프레임을 별도 출력 버퍼에 복사하여 처리하고 실제 플랫폼으로 전달합니다. 엔진 소유 색·깊이 버퍼와
+렌더링 통계는 그대로이며, PAL의 시간·입력·로그 호출은 원래 userdata로 전달합니다.
+이 모듈은 GPU 파이프라인이나 셰이더 언어 컴파일러가 아닙니다.
+
+설치는 독립된 `PixelicaShaders` CMake 패키지와 `Pixelica::shaders` 타깃을 사용합니다.
+기존 SDK 로더를 교체하지 않아 이전 파티클 추가 ZIP과 병합해도 충돌하지 않습니다.
+상세 계약은 [shaders.md](shaders.md), 패키징은 `tools/package_shaders.py`를 참조하세요.
+
+## 기본 UI
+
+`modules/ui`는 항상 빌드하고 두 기본 SDK에 포함하는 별도 정적 라이브러리입니다.
+위젯 배열·텍스트·컨텍스트·출력은 호출자 소유이며 힙 할당이나 SDL·2D·3D 의존성이 없습니다.
+입력은 프레임당 한 번 갱신합니다. 버튼·체크박스·슬라이더의 포커스, 상승 에지, 포인터 캡처를 처리하고
+장식 위젯은 입력을 통과시킵니다. UI 입력을 게임에 전달할지는 `wants_pointer/buttons`로 결정합니다.
+
+2D는 장면 뒤에 RGB565 위젯을 직접 그립니다. 3D·2.5D는 PAL presenter가 엔진의 읽기 전용 프레임을
+호출자 출력에 복사한 뒤 UI를 그려 실제 플랫폼으로 보냅니다. 깊이·카메라·렌더링 통계는 바꾸지 않습니다.
+셰이더와 함께 쓸 때는 `엔진 → 셰이더 → UI → 플랫폼` 순서로 연결하면 글자가 후처리로 흐려지지 않습니다.
+독립 `PixelicaUI` CMake 패키지로 찾기 때문에 이전 선택 모듈 ZIP이 기본 컴포넌트 로더를 교체해도
+UI를 찾을 수 있습니다. 기본 글꼴은 ASCII이며 한글은 사용자 비트맵 콜백으로 공급합니다.
+상세 사용법과 소유권·오류 규칙은 [ui.md](ui.md)에 있습니다.
+
+## 저장·화면·번역 공통 기능
+
+`src/game`의 저장·화면 전환·다국어는 `Pixelica::common`에 포함되어 렌더러 없이도 사용합니다.
+저장은 게임이 직렬화한 바이트를 버전·길이·CRC가 있는 컨테이너로 감싸며, PC 파일 도우미는 임시 파일 작성 후 교체합니다.
+임베디드 저장 장치는 컨테이너 인코딩·디코딩에 게임의 NVS·SD 입출력을 연결합니다.
+화면 관리자는 기존 3D `scene`과 별개로 게임 진행 상태를 관리하며, 콜백 중 요청한 전환을 안전한 경계에서 처리합니다.
+번역표와 문자열은 호출자가 소유합니다. 언어를 바꾸면 UI 위젯의 문자열도 갱신합니다.
+폰트 도구는 게임에서 사용하는 유니코드 글자만 BDF에서 추출해 UI 콜백으로 변환합니다.
+자세한 계약은 [save.md](save.md), [screens.md](screens.md), [i18n.md](i18n.md)에 있습니다.

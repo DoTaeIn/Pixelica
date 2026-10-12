@@ -64,6 +64,13 @@ rate. `pixelica_frame_stats` reports triangles, `fragments_covered`, `pixels_cov
 the arena high-water mark; coverage is `pixels_covered / (width*height)` and geometric overdraw is
 `fragments_covered / pixels_covered`.
 
+`pixelica_draw_mesh_options(ctx, mesh, model, material, &options)` adds per-axis
+CLAMP/REPEAT and OPAQUE/TEST/BLEND through `pixelica/draw_options.h`.
+`pixelica2d_draw_sprite_ex` accepts the same options for sprites. RGB565 textures
+keep their existing format; optional per-texel alpha is a separate byte plane.
+BLEND depth-tests without writing depth; callers draw it back-to-front after
+opaque/TEST geometry. See [texture_options.md](texture_options.md).
+
 ## Textures and materials
 
 `PIXELICA_Texture` is `{pixels, width, height}` (RGB565, 1..4096 per side). `PIXELICA_Material` is
@@ -138,6 +145,25 @@ of `pixelica.h`, independent of each other) add them; details, ownership rules a
   the target distance is clamped, no stretch or angle limits). It does not touch a skeleton.
 
 ## Minimal program shape
+
+Layered mesh materials: [material_layers.md](material_layers.md) documents
+`pixelica_draw_mesh_layers`, per-vertex RGBA8 tint/alpha, and up to three additional
+textures with independent UVs and multiply/add/lerp composition. The legacy material
+layout and entry points remain unchanged. This API belongs to the 3D renderer and the
+3D portion of hybrid rendering.
+
+Camera helpers (`Pixelica::common`): [camera.md](camera.md) covers 2D follow/bounds/coordinate conversion,
+3D look-at/smoothing and deterministic shake. Debug timing and formatting are in [debug.md](debug.md);
+the optional-to-call HUD uses the bundled `Pixelica::ui` library. Neither common API requires a renderer.
+Chunk management (`Pixelica::common`): [chunks.md](chunks.md) covers checked coordinates,
+inclusive target ranges, caller-owned slots, load/unload callbacks, budgets and retry after a failed load.
+
+Offscreen targets, borrowed frame/texture views and caller-owned color/depth snapshots:
+[framebuffer.md](framebuffer.md). Copy and sampling APIs belong to `Pixelica::common`
+and also accept 2D buffers with a caller-supplied stride; context adapters belong to 3D.
+[render_effects.md](render_effects.md) covers `pixelica_draw_mesh_effects`: nearest/bilinear
+material sampling, a pixel callback after material evaluation, and up to four world clip planes.
+These mesh effects apply to 3D and the 3D portion of hybrid rendering.
 
 See `sdk/template/src/` (portable `game.c` plus a headless driver) and `examples/` (hello_triangle, hello_cube,
 hello_animation, pixel_room; `hello_rig` with the optional modules) for complete uses; `docs/sdk.md` explains how to build one against the installed package.

@@ -76,7 +76,10 @@ endif()
 
 idf_component_register(
   SRCS ${PIXELICA2D_SOURCES}
+    "${PIXELICA_ROOT}/modules/ui/ui.c" "${PIXELICA_ROOT}/modules/ui/ui_rgb565.c"
+    "${PIXELICA_ROOT}/modules/ui/ui_font.c" "${PIXELICA_ROOT}/modules/ui/ui_presenter.c" "${PIXELICA_ROOT}/modules/ui/ui_debug.c"
   INCLUDE_DIRS "${PIXELICA2D_STAGED_INCLUDE}" "${PIXELICA_ROOT}/modules/renderer2d/include"
+    "${PIXELICA_ROOT}/modules/ui/include"
   PRIV_INCLUDE_DIRS "${PIXELICA_ROOT}/modules/renderer2d")
 
 # Nothing below runs in script mode (idf_component_register() returned above).

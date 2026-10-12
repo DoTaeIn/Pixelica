@@ -37,6 +37,9 @@ option(PIXELICA_BUILD_SKELETON "Build the optional skeleton module (Pixelica::sk
 option(PIXELICA_BUILD_IK "Build the optional IK module (Pixelica::ik: analytic two-bone IK)" OFF)
 option(PIXELICA_BUILD_INPUT_MANAGER "Build the optional input manager module (Pixelica::input_manager: device snapshots -> actions, shared by 2D and 3D; with PIXELICA_PLATFORM=SDL3 also the build-only SDL3 adapter)" OFF)
 option(PIXELICA_BUILD_ONLINE "Build optional room-code multiplayer and record boards (Pixelica::online; Windows WinHTTP / Linux libcurl)" OFF)
+option(PIXELICA_BUILD_AUDIO "Build optional WAV/PCM audio mixer (Pixelica::audio; with SDL3 also Pixelica::audio_sdl3 output)" OFF)
+option(PIXELICA_BUILD_PARTICLES "Build optional fixed-pool particles and adapters for enabled renderers" OFF)
+option(PIXELICA_BUILD_SHADERS "Build optional CPU RGB565 pixel shaders and framebuffer effects" OFF)
 
 if(NOT PIXELICA_PLATFORM STREQUAL "SDL3" AND NOT PIXELICA_PLATFORM STREQUAL "HEADLESS")
   message(FATAL_ERROR "PIXELICA_PLATFORM must be SDL3 or HEADLESS (got '${PIXELICA_PLATFORM}')")
@@ -201,6 +204,8 @@ endif()
 # from the export files that actually exist. That is what lets two SDKs be
 # merged into one prefix.
 # ---------------------------------------------------------------------------
+add_subdirectory(modules/ui)
+
 if(PIXELICA_BUILD_3D)
   add_library(pixelica_core STATIC ${PIXELICA_RENDERER3D_SOURCES})
   add_library(Pixelica::core ALIAS pixelica_core)
@@ -244,6 +249,28 @@ endif()
 if(PIXELICA_BUILD_INPUT_MANAGER)
   add_subdirectory(modules/input_manager)
 endif()
+if(PIXELICA_BUILD_AUDIO)
+  add_subdirectory(modules/audio)
+  if(PIXELICA_INSTALL)
+    install(FILES docs/audio.md
+      DESTINATION "${PIXELICA_INSTALL_SHAREDIR}/docs" COMPONENT audio)
+  endif()
+endif()
+if(PIXELICA_BUILD_SHADERS)
+  add_subdirectory(modules/shaders)
+endif()
+if(PIXELICA_BUILD_PARTICLES)
+  add_subdirectory(modules/particles)
+  if(PIXELICA_INSTALL)
+    install(FILES docs/particles.md
+      DESTINATION "${PIXELICA_INSTALL_SHAREDIR}/docs" COMPONENT particles)
+    # An add-on updates the loader in an older matching base SDK, without
+    # replacing any renderer or common library.
+    install(CODE "file(COPY_FILE \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaPackage.cmake\"
+      \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${PIXELICA_INSTALL_CMAKEDIR}/PixelicaPackage.cmake\")"
+      COMPONENT particles)
+  endif()
+endif()
 if(PIXELICA_BUILD_ONLINE)
   add_subdirectory(modules/online)
   if(PIXELICA_INSTALL)
@@ -286,9 +313,9 @@ if(BUILD_TESTING)
   if(NOT PIXELICA_TEST_SOURCES)
     message(WARNING "BUILD_TESTING is ON but no tests/test_*.c files were found")
   endif()
-  set(PIXELICA_COMMON_TESTS test_math)
+  set(PIXELICA_COMMON_TESTS test_math test_save test_screens test_i18n test_camera test_chunks test_framebuffer test_collision2d)
   set(PIXELICA_COMMON_MIXED_TESTS test_input test_animation)
-  set(PIXELICA_RENDERER2D_TESTS test_renderer2d)
+  set(PIXELICA_RENDERER2D_TESTS test_renderer2d test_texture_options2d)
   set(PIXELICA_HYBRID_TESTS test_hybrid)
   # Tests that need code which only examples/ builds. With PIXELICA_BUILD_EXAMPLES=OFF
   # that code does not exist, so the test would not link: it is omitted.
@@ -325,6 +352,49 @@ if(BUILD_TESTING)
         set(test_omit_reason "PIXELICA_BUILD_INPUT_MANAGER=OFF")
       endif()
       set(test_libs pixelica_input_manager)
+    elseif(test_name STREQUAL "test_debug" OR test_name MATCHES "^test_ui($|_)")
+      set(test_libs pixelica_ui)
+      if(test_name STREQUAL "test_ui_integration")
+        if(TARGET pixelica_renderer2d)
+          list(APPEND test_libs pixelica_renderer2d)
+        endif()
+        if(TARGET pixelica_core)
+          list(APPEND test_libs pixelica_core)
+          set(test_with_3d ON)
+        endif()
+      endif()
+    elseif(test_name MATCHES "^test_shaders($|_)")
+      if(NOT PIXELICA_BUILD_SHADERS)
+        set(test_omit_reason "PIXELICA_BUILD_SHADERS=OFF")
+      endif()
+      set(test_libs pixelica_shaders)
+      if(test_name STREQUAL "test_shaders_render")
+        if(TARGET pixelica_renderer2d)
+          list(APPEND test_libs pixelica_renderer2d)
+        endif()
+        if(TARGET pixelica_core)
+          list(APPEND test_libs pixelica_core)
+          set(test_with_3d ON)
+        endif()
+      endif()
+    elseif(test_name STREQUAL "test_particles")
+      if(NOT PIXELICA_BUILD_PARTICLES)
+        set(test_omit_reason "PIXELICA_BUILD_PARTICLES=OFF")
+      endif()
+      set(test_libs pixelica_particles)
+    elseif(test_name STREQUAL "test_particles_render" OR test_name STREQUAL "test_particles_safety")
+      if(NOT TARGET pixelica_particles2d)
+        set(test_omit_reason "particles rendering needs particles and the 2D renderer")
+      endif()
+      set(test_libs pixelica_particles2d)
+      if(TARGET pixelica_particles25d)
+        list(APPEND test_libs pixelica_particles25d)
+      endif()
+    elseif(test_name STREQUAL "test_audio")
+      if(NOT PIXELICA_BUILD_AUDIO)
+        set(test_omit_reason "PIXELICA_BUILD_AUDIO=OFF")
+      endif()
+      set(test_libs pixelica_audio)
     elseif(test_name STREQUAL "test_online")
       if(NOT PIXELICA_BUILD_ONLINE)
         set(test_omit_reason "PIXELICA_BUILD_ONLINE=OFF")
@@ -362,6 +432,16 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(${test_name} "${test_source}")
+    if(test_name STREQUAL "test_ui_integration" AND TARGET pixelica_renderer2d)
+      target_compile_definitions(${test_name} PRIVATE PIXELICA_TEST_UI2D=1)
+    endif()
+    if(test_name STREQUAL "test_shaders_render" AND TARGET pixelica_renderer2d)
+      target_compile_definitions(${test_name} PRIVATE PIXELICA_TEST_SHADERS2D=1)
+    endif()
+    if((test_name STREQUAL "test_particles_render" OR test_name STREQUAL "test_particles_safety")
+       AND TARGET pixelica_particles25d)
+      target_compile_definitions(${test_name} PRIVATE PIXELICA_TEST_PARTICLES25D=1)
+    endif()
     target_link_libraries(${test_name} PRIVATE ${test_libs} pixelica_options)
     target_include_directories(${test_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     if(test_with_3d)
@@ -521,12 +601,17 @@ if(BUILD_TESTING)
        AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests")
       add_test(NAME package_sdk_unittest
         COMMAND "${Python3_EXECUTABLE}" -B -I -m unittest discover
-                -s "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests" -p "test_package_sdk*.py" -v
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests" -p "test_package*.py" -v
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
       set_tests_properties(package_sdk_unittest PROPERTIES
         LABELS "python;sdk"
         TIMEOUT 300
         ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;PIXELICA_TOOLS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tools")
+      add_test(NAME font_tool_unittest
+        COMMAND "${Python3_EXECUTABLE}" -B -I -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests" -p "test_pixelica_font.py" -v
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+      set_tests_properties(font_tool_unittest PROPERTIES LABELS "python;font" TIMEOUT 60)
     endif()
   else()
     message(STATUS "Pixelica: Python 3 not found; python_unittest, asset_reproducibility and package_sdk_unittest not registered")
@@ -573,6 +658,17 @@ if(PIXELICA_INSTALL)
     FILE PixelicaCommonTargets.cmake
     DESTINATION "${PIXELICA_INSTALL_CMAKEDIR}"
     COMPONENT common)
+  foreach(pixelica_common_component common core)
+    if(pixelica_common_component STREQUAL "core" AND NOT PIXELICA_BUILD_3D)
+      continue()
+    endif()
+    install(FILES docs/save.md docs/screens.md docs/i18n.md docs/texture_options.md docs/camera.md docs/debug.md docs/chunks.md docs/material_layers.md docs/framebuffer.md docs/render_effects.md
+      DESTINATION "${PIXELICA_INSTALL_SHAREDIR}/docs"
+      COMPONENT ${pixelica_common_component})
+    install(FILES tools/pixelica_font.py
+      DESTINATION "${PIXELICA_INSTALL_SHAREDIR}/tools"
+      COMPONENT ${pixelica_common_component})
+  endforeach()
   if(PIXELICA_BUILD_3D)
     install(TARGETS pixelica_common
       ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}" COMPONENT core
@@ -690,6 +786,38 @@ if(PIXELICA_INSTALL)
     elseif(CMAKE_CROSSCOMPILING)
       message(STATUS "Pixelica: sdk_installed_template* not registered (cross-compiling: the template build would need the same toolchain and an emulator)")
     else()
+      add_test(NAME sdk_installed_ui
+        COMMAND "${CMAKE_COMMAND}"
+          ${PIXELICA_SDK_CHECK_COMMON_ARGS}
+          "-DPIXELICA_SDK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdk-check-ui"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaUISdkCheck.cmake")
+      set_tests_properties(sdk_installed_ui PROPERTIES LABELS "sdk;ui" TIMEOUT 180)
+      if(PIXELICA_BUILD_SHADERS)
+        add_test(NAME sdk_installed_shaders
+          COMMAND "${CMAKE_COMMAND}"
+            ${PIXELICA_SDK_CHECK_COMMON_ARGS}
+            "-DPIXELICA_SDK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdk-check-shaders"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaShadersSdkCheck.cmake")
+        set_tests_properties(sdk_installed_shaders PROPERTIES LABELS "sdk;shaders" TIMEOUT 180)
+      endif()
+      if(PIXELICA_BUILD_PARTICLES)
+        add_test(NAME sdk_installed_particles
+          COMMAND "${CMAKE_COMMAND}"
+            ${PIXELICA_SDK_CHECK_COMMON_ARGS}
+            "-DPIXELICA_SDK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdk-check-particles"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaParticlesSdkCheck.cmake")
+        set_tests_properties(sdk_installed_particles PROPERTIES LABELS "sdk;particles" TIMEOUT 180)
+      endif()
+      if(PIXELICA_BUILD_AUDIO)
+        add_test(NAME sdk_installed_audio
+          COMMAND "${CMAKE_COMMAND}"
+            ${PIXELICA_SDK_CHECK_COMMON_ARGS}
+            "-DPIXELICA_SDK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdk-check-audio"
+            "-DPIXELICA_AUDIO_SDL3_DIR=${SDL3_DIR}"
+            "-DPIXELICA_AUDIO_HAS_SDL3=$<TARGET_EXISTS:pixelica_audio_sdl3>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaAudioSdkCheck.cmake")
+        set_tests_properties(sdk_installed_audio PROPERTIES LABELS "sdk;audio" TIMEOUT 180)
+      endif()
       # 3D starter template, only when the 3D renderer is built.
       if(PIXELICA_BUILD_3D AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/sdk/template")
         add_test(NAME sdk_installed_template

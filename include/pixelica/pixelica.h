@@ -12,8 +12,9 @@
  *
  * Memory ownership
  *   - pixelica_create() performs the ONLY heap allocation (one block holding the
- *     context, the RGB565 color buffer, the uint16 depth buffer and the
- *     frame arena). pixelica_destroy() frees it. Nothing is allocated per frame.
+ *     context, the RGB565 color buffer, the uint16 depth buffer, the
+ *     frame arena and a ceil(W*H/8)-byte coverage bitmap for stats).
+ *     pixelica_destroy() frees it. Nothing is allocated per frame.
  *   - pixelica_create_in_buffer() places the same layout in caller-owned memory
  *     (e.g. a static MCU buffer) and never allocates; size it with
  *     pixelica_memory_requirement(). Any alignment is accepted.
@@ -37,6 +38,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "pixelica/framebuffer.h"
+
 #include "pixelica/status.h"
 #include "pixelica/input.h"
 #include "pixelica/platform.h"
@@ -47,6 +50,9 @@
 #include "pixelica/assets.h"
 #include "pixelica/scene.h"
 #include "pixelica/animation.h"
+#include "pixelica/camera.h"
+#include "pixelica/debug.h"
+#include "pixelica/chunks.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -110,8 +116,9 @@ void pixelica_set_view_projection(PIXELICA_Context *ctx, const float matrix[16])
 /* Default PIXELICA_CULL_BACK. Invalid values are ignored. */
 void pixelica_set_cull_mode(PIXELICA_Context *ctx, PIXELICA_CullMode mode);
 
-/* Clears color to `clear_color`, depth to PIXELICA_DEPTH_CLEAR, resets the
- * draw counter, frame arena and stats. Calling it again restarts the frame. */
+/* Clears color to `clear_color`, depth to PIXELICA_DEPTH_CLEAR, the coverage
+ * bitmap, resets the draw counter, frame arena and stats. Calling it again
+ * restarts the frame. */
 void pixelica_begin_frame(PIXELICA_Context *ctx, uint16_t clear_color);
 
 /*
@@ -141,6 +148,68 @@ PIXELICA_Status pixelica_draw_mesh_ex(PIXELICA_Context *ctx, const PIXELICA_Mesh
                             const float model[16],
                             const PIXELICA_Material *material);
 
+/*
+ * pixelica_draw_mesh_ex with texture wrap and alpha options (draw_options.h,
+ * renderer.h step 7). `options` == NULL is exactly pixelica_draw_mesh_ex().
+ * Also rejected before any pixel is written (PIXELICA_ERR_INVALID_ARG):
+ *   wrap_u/wrap_v/alpha_mode outside their enums; texture_alpha == NULL with
+ *   texture_alpha_bytes != 0; texture_alpha without a material texture or
+ *   with texture_alpha_bytes < width*height; `options` or the declared
+ *   alpha range overlapping context-owned memory (context, color, depth,
+ *   arena, coverage). These checks apply in every mode, even OPAQUE, which
+ *   otherwise ignores opacity and the alpha plane.
+ */
+PIXELICA_Status pixelica_draw_mesh_options(PIXELICA_Context *ctx,
+                                 const PIXELICA_Mesh *mesh,
+                                 const float model[16],
+                                 const PIXELICA_Material *material,
+                                 const PIXELICA_DrawOptions *options);
+
+/*
+ * pixelica_draw_mesh_options with a layered material (PIXELICA_MaterialLayers,
+ * renderer.h; docs/material_layers.md). `material` == NULL is exactly
+ * pixelica_draw_mesh_options(ctx, mesh, model, NULL, options); a material
+ * without layers and vertex colors draws exactly like its `base`.
+ * Rejected before any pixel, stat counter or arena byte is written
+ * (PIXELICA_ERR_INVALID_ARG), in addition to the checks above on `base`:
+ *   layer_count > PIXELICA_MAX_TEXTURE_LAYERS, layers == NULL with
+ *   layer_count > 0; a layer with a NULL/invalid texture, NULL uvs (when
+ *   vertex_count > 0), non-finite uvs, or wrap/combine outside their enums;
+ *   the mesh/model, vertex/index arrays, material, its layer array, any texture struct/texels, uvs,
+ *   triangle_colors or vertex_colors overlapping context-owned memory.
+ */
+PIXELICA_Status pixelica_draw_mesh_layers(PIXELICA_Context *ctx,
+                                const PIXELICA_Mesh *mesh,
+                                const float model[16],
+                                const PIXELICA_MaterialLayers *material,
+                                const PIXELICA_DrawOptions *options);
+
+/*
+ * pixelica_draw_mesh_layers with mesh effects (PIXELICA_MeshEffects in
+ * renderer.h; docs/render_effects.md): bilinear filtering, a per-fragment
+ * hook and up to PIXELICA_MAX_WORLD_CLIP_PLANES world clip planes.
+ * `effects` == NULL is exactly pixelica_draw_mesh_layers(ctx, mesh, model,
+ * material, options). With effects, the mesh/model/material arrays are
+ * checked for context aliasing even when `material` is NULL, and these are
+ * also rejected before any pixel, stat counter or arena byte is written
+ * (PIXELICA_ERR_INVALID_ARG): `effects` or its plane array overlapping
+ * context-owned memory; filter outside its enum; clip_plane_count >
+ * PIXELICA_MAX_WORLD_CLIP_PLANES or > 0 with NULL clip_planes; a plane with
+ * a non-finite or all-zero normal or a non-finite distance; a non-affine
+ * model while planes are enabled. A vertex whose world position or plane
+ * distance overflows float is rejected before any pixel is written.
+ * While effects->pixel runs, same-context drawing/end-frame calls return
+ * PIXELICA_ERR_INVALID_ARG and void mutators do nothing, without changing
+ * state. The callback must not write borrowed buffers, draw through an
+ * already-bound 2D view, or reuse live context storage in create_in_buffer.
+ */
+PIXELICA_Status pixelica_draw_mesh_effects(PIXELICA_Context *ctx,
+                                 const PIXELICA_Mesh *mesh,
+                                 const float model[16],
+                                 const PIXELICA_MaterialLayers *material,
+                                 const PIXELICA_DrawOptions *options,
+                                 const PIXELICA_MeshEffects *effects);
+
 /* Ends the frame and presents once via the PAL (if any).
  * PIXELICA_ERR_INVALID_ARG if no frame is active (present is not called);
  * PIXELICA_ERR_PLATFORM if present_rgb565 returned false. Either way the frame
@@ -150,6 +219,16 @@ PIXELICA_Status pixelica_end_frame(PIXELICA_Context *ctx);
 /* NULL for a NULL context. */
 const uint16_t *pixelica_color_buffer(const PIXELICA_Context *ctx);
 const uint16_t *pixelica_depth_buffer(const PIXELICA_Context *ctx);
+
+/* Borrowed offscreen/live buffer adapters (no allocation or copy). `out`
+ * must not overlap context-owned memory. Invalid input leaves it unchanged.
+ * Views/textures expire on destroy; their contents change on subsequent draws.
+ * Sample another context or an independent snapshot to avoid read/write feedback.
+ * See docs/framebuffer.md for snapshots, sampling and target setup. */
+PIXELICA_Status pixelica_frame_view(const PIXELICA_Context *ctx,
+                                  PIXELICA_FrameView *out);
+PIXELICA_Status pixelica_frame_texture(const PIXELICA_Context *ctx,
+                                     PIXELICA_Texture *out);
 
 /* Stats of the current/most recent frame (zeroed for NULL ctx). */
 PIXELICA_FrameStats pixelica_frame_stats(const PIXELICA_Context *ctx);
@@ -173,7 +252,8 @@ void pixelica_update(PIXELICA_Context *ctx, uint64_t elapsed_us,
                 PIXELICA_UpdateFn update, void *userdata);
 
 /* Debug aid: 1 if the guard words placed after the color buffer, depth
- * buffer and frame arena are intact, 0 if memory was overrun (or NULL). */
+ * buffer, frame arena and coverage bitmap are intact, 0 if memory was
+ * overrun (or NULL). */
 int pixelica_memory_guards_intact(const PIXELICA_Context *ctx);
 
 #ifdef __cplusplus

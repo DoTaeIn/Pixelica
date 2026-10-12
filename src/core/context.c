@@ -6,7 +6,11 @@
  * noted):
  *
  *   [PIXELICA_Context][guard0][color W*H*2][guard1][depth W*H*2][guard2]
- *   [arena frame_arena_bytes][guard3]
+ *   [arena frame_arena_bytes][guard3][coverage ceil(W*H/8)][guard4]
+ *
+ * The coverage bitmap (one bit per pixel, cleared by begin_frame) records
+ * which pixels any fragment covered this frame, so pixels_covered stays
+ * exact even when alpha-tested or blended fragments write no depth.
  *
  * Guards are PIXELICA_GUARD_BYTES bytes of PIXELICA_GUARD_BYTE_VALUE and are checked
  * by pixelica_memory_guards_intact().
@@ -19,8 +23,15 @@
 #define PIXELICA_ALIGN 16u
 
 typedef struct PIXELICA_Layout {
-    size_t guard0, color, guard1, depth, guard2, arena, guard3, total;
+    size_t guard0, color, guard1, depth, guard2, arena, guard3, coverage,
+        guard4, total;
 } PIXELICA_Layout;
+
+/* Bitmap bytes; pixels <= PIXELICA_MAX_DIMENSION^2, so no overflow. */
+static size_t pixelica_coverage_bytes(const PIXELICA_Config *cfg)
+{
+    return ((size_t)cfg->width * (size_t)cfg->height + 7u) / 8u;
+}
 
 static int pixelica_add_size(size_t *acc, size_t add)
 {
@@ -109,6 +120,14 @@ static int pixelica_compute_layout(const PIXELICA_Config *cfg, PIXELICA_Layout *
         return 0;
     }
     l->guard3 = at;
+    if (!pixelica_add_size(&at, PIXELICA_GUARD_BYTES) || !pixelica_align_size(&at)) {
+        return 0;
+    }
+    l->coverage = at;
+    if (!pixelica_add_size(&at, pixelica_coverage_bytes(cfg))) {
+        return 0;
+    }
+    l->guard4 = at;
     if (!pixelica_add_size(&at, PIXELICA_GUARD_BYTES)) {
         return 0;
     }
@@ -194,11 +213,13 @@ PIXELICA_Status pixelica_create_in_buffer(const PIXELICA_Config *cfg,
     ctx->color = (uint16_t *)(void *)(base + l.color);
     ctx->depth = (uint16_t *)(void *)(base + l.depth);
     ctx->arena = base + l.arena;
+    ctx->coverage = base + l.coverage;
     ctx->guards[0] = base + l.guard0;
     ctx->guards[1] = base + l.guard1;
     ctx->guards[2] = base + l.guard2;
     ctx->guards[3] = base + l.guard3;
-    for (i = 0; i < 4; ++i) {
+    ctx->guards[4] = base + l.guard4;
+    for (i = 0; i < PIXELICA_GUARD_COUNT; ++i) {
         memset(ctx->guards[i], (int)PIXELICA_GUARD_BYTE_VALUE, PIXELICA_GUARD_BYTES);
     }
 
@@ -209,6 +230,7 @@ PIXELICA_Status pixelica_create_in_buffer(const PIXELICA_Config *cfg,
         ctx->depth[i] = PIXELICA_DEPTH_CLEAR;
     }
     memset(ctx->arena, 0, cfg->frame_arena_bytes);
+    memset(ctx->coverage, 0, pixelica_coverage_bytes(cfg));
 
     pixelica_mat4_identity(ctx->view_proj);
     ctx->view_proj_valid = 1;
@@ -255,7 +277,7 @@ void pixelica_destroy(PIXELICA_Context *ctx)
 {
     void *block;
 
-    if (!pixelica_context_valid(ctx)) {
+    if (!pixelica_context_valid(ctx) || ctx->pixel_callback_active) {
         return;
     }
     block = ctx->heap_block;
@@ -265,7 +287,7 @@ void pixelica_destroy(PIXELICA_Context *ctx)
 
 void pixelica_set_view_projection(PIXELICA_Context *ctx, const float matrix[16])
 {
-    if (!pixelica_context_valid(ctx)) {
+    if (!pixelica_context_valid(ctx) || ctx->pixel_callback_active) {
         return;
     }
     if (!pixelica_mat4_is_finite(matrix)) {
@@ -278,7 +300,7 @@ void pixelica_set_view_projection(PIXELICA_Context *ctx, const float matrix[16])
 
 void pixelica_set_cull_mode(PIXELICA_Context *ctx, PIXELICA_CullMode mode)
 {
-    if (!pixelica_context_valid(ctx)) {
+    if (!pixelica_context_valid(ctx) || ctx->pixel_callback_active) {
         return;
     }
     if (mode == PIXELICA_CULL_BACK || mode == PIXELICA_CULL_NONE) {
@@ -291,7 +313,7 @@ void pixelica_begin_frame(PIXELICA_Context *ctx, uint16_t clear_color)
     size_t pixels;
     size_t i;
 
-    if (!pixelica_context_valid(ctx)) {
+    if (!pixelica_context_valid(ctx) || ctx->pixel_callback_active) {
         return;
     }
     pixels = (size_t)ctx->cfg.width * (size_t)ctx->cfg.height;
@@ -299,6 +321,7 @@ void pixelica_begin_frame(PIXELICA_Context *ctx, uint16_t clear_color)
         ctx->color[i] = clear_color;
         ctx->depth[i] = PIXELICA_DEPTH_CLEAR;
     }
+    memset(ctx->coverage, 0, pixelica_coverage_bytes(&ctx->cfg));
     ctx->draw_count = 0;
     memset(&ctx->stats, 0, sizeof ctx->stats);
     ctx->stats.last_error = PIXELICA_OK;
@@ -309,7 +332,7 @@ PIXELICA_Status pixelica_end_frame(PIXELICA_Context *ctx)
 {
     PIXELICA_Status st = PIXELICA_OK;
 
-    if (!pixelica_context_valid(ctx)) {
+    if (!pixelica_context_valid(ctx) || ctx->pixel_callback_active) {
         return PIXELICA_ERR_INVALID_ARG;
     }
     if (!ctx->in_frame) {
@@ -358,7 +381,7 @@ void pixelica_update(PIXELICA_Context *ctx, uint64_t elapsed_us,
     uint64_t steps;
     uint64_t i;
 
-    if (!pixelica_context_valid(ctx) || update == NULL) {
+    if (!pixelica_context_valid(ctx) || ctx->pixel_callback_active || update == NULL) {
         return;
     }
     if (ctx->has_platform) {
@@ -389,7 +412,7 @@ int pixelica_memory_guards_intact(const PIXELICA_Context *ctx)
     if (!pixelica_context_valid(ctx)) {
         return 0;
     }
-    for (g = 0; g < 4; ++g) {
+    for (g = 0; g < PIXELICA_GUARD_COUNT; ++g) {
         for (i = 0; i < PIXELICA_GUARD_BYTES; ++i) {
             if (ctx->guards[g][i] != PIXELICA_GUARD_BYTE_VALUE) {
                 return 0;

@@ -45,6 +45,15 @@ set(PIXELICA_CORE_SOURCE_NAMES
   assets/mesh_asset.c
   assets/texture_asset.c
   core/context.c
+  core/framebuffer.c
+  game/save.c
+  game/screens.c
+  game/i18n.c
+  game/camera.c
+  game/debug.c
+  game/chunks.c
+  game/framebuffer.c
+  game/collision2d.c
   input/input.c
   math/mat4.c
   renderer/pipeline.c
@@ -103,7 +112,9 @@ set(PIXELICA_PORT_SOURCES
 
 idf_component_register(
   SRCS ${PIXELICA_CORE_SOURCES} ${PIXELICA_PORT_SOURCES}
-  INCLUDE_DIRS "${PIXELICA_ROOT}/include" "${PIXELICA_PORT_DIR}/include"
+    "${PIXELICA_ROOT}/modules/ui/ui.c" "${PIXELICA_ROOT}/modules/ui/ui_rgb565.c"
+    "${PIXELICA_ROOT}/modules/ui/ui_font.c" "${PIXELICA_ROOT}/modules/ui/ui_presenter.c" "${PIXELICA_ROOT}/modules/ui/ui_debug.c"
+  INCLUDE_DIRS "${PIXELICA_ROOT}/include" "${PIXELICA_PORT_DIR}/include" "${PIXELICA_ROOT}/modules/ui/include"
   PRIV_INCLUDE_DIRS "${PIXELICA_ROOT}/src" "${PIXELICA_PORT_DIR}"
   # pixelica_esp32p4.h includes esp_err.h and the esp_lcd panel / panel IO headers.
   REQUIRES esp_lcd

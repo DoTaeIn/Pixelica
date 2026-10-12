@@ -77,6 +77,7 @@
 #include "pixelica/assets_common.h"
 #include "pixelica/animation.h"
 #include "pixelica/platform.h"
+#include "pixelica/draw_options.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -266,6 +267,26 @@ PIXELICA_Status pixelica2d_sprite_frame(PIXELICA2D_Sprite *sprite, uint32_t fram
  * above). Counts one draw call, even if nothing is visible.
  */
 PIXELICA_Status pixelica2d_draw_sprite(PIXELICA2D_Context *ctx, const PIXELICA2D_Sprite *sprite);
+
+/*
+ * Draw one sprite with opt-in sampling/transparency (see pixelica/draw_options.h
+ * and docs/texture_options.md). options == NULL is exactly pixelica2d_draw_sprite.
+ * With options the source rectangle only needs width/height > 0: x/y may be
+ * negative and the rectangle may leave the texture. The absolute source texel
+ * (source.x + floor(u), source.y + floor(v)) is repeated (floor modulo) or
+ * clamped to the whole texture per axis; a texture_alpha plane (width*height,
+ * tightly packed) is read at the same texel. Unlike the legacy call this
+ * therefore accepts out-of-range source rectangles (clamped). OPAQUE ignores
+ * options.opacity and the alpha plane. TEST/BLEND use
+ * alpha = round(round(map*options.opacity/255)*sprite.opacity/255); TEST
+ * discards alpha < cutoff and copies survivors opaque (depth_test/depth_write
+ * honored), BLEND skips alpha 0, blends in RGB565, honors depth_test and never
+ * writes depth. Invalid enums, inconsistent alpha pointer/size, or options/alpha
+ * storage overlapping the color/depth buffer return PIXELICA_ERR_INVALID_ARG
+ * with nothing changed.
+ */
+PIXELICA_Status pixelica2d_draw_sprite_ex(PIXELICA2D_Context *ctx, const PIXELICA2D_Sprite *sprite,
+                                          const PIXELICA_DrawOptions *options);
 
 /*
  * Fill a screen-space rectangle (camera and depth ignored) inside the clip

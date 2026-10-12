@@ -10,6 +10,7 @@
 #define PIXELICA_CONTEXT_MAGIC 0x50334443u /* "P3DC" */
 #define PIXELICA_GUARD_BYTES 16u
 #define PIXELICA_GUARD_BYTE_VALUE 0xA5u
+#define PIXELICA_GUARD_COUNT 5u /* guards[PIXELICA_GUARD_COUNT - 1] ends the block */
 
 /* Frame-arena element: one transformed vertex plus its clip outcode. */
 typedef struct PIXELICA_ClipVertex {
@@ -28,7 +29,9 @@ struct PIXELICA_Context {
     uint16_t *color;           /* width*height, row 0 = top */
     uint16_t *depth;           /* width*height */
     unsigned char *arena;      /* frame_arena_bytes, 16-byte aligned */
-    unsigned char *guards[4];  /* before color, after color/depth/arena */
+    unsigned char *coverage;   /* ceil(W*H/8) bits: pixel covered this frame */
+    unsigned char *guards[PIXELICA_GUARD_COUNT]; /* before color, after
+                                                  * color/depth/arena/coverage */
 
     float view_proj[16];
     int view_proj_valid;
@@ -40,6 +43,11 @@ struct PIXELICA_Context {
 
     /* Fixed-timestep accumulator in units of 1/PIXELICA_UPDATE_HZ microsecond. */
     uint64_t accumulator;
+
+    /* Nonzero while a PIXELICA_PixelFn of pixelica_draw_mesh_effects runs.
+     * Every API that mutates this context must refuse (without writing any
+     * state, last_error included) while it is set. */
+    int pixel_callback_active;
 };
 
 /* 1 if ctx is non-NULL and alive. */

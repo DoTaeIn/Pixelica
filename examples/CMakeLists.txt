@@ -30,6 +30,75 @@ function(pixelica_add_guarded_example name)
   endif()
 endfunction()
 
+add_executable(hello_ui hello_ui/main.c)
+target_link_libraries(hello_ui PRIVATE pixelica_ui pixelica_options)
+if(PIXELICA_PLATFORM STREQUAL "SDL3")
+  if(NOT TARGET SDL3::SDL3)
+    find_package(SDL3 3.4.18 CONFIG REQUIRED)
+  endif()
+  target_compile_definitions(hello_ui PRIVATE HELLO_UI_SDL=1)
+  target_link_libraries(hello_ui PRIVATE SDL3::SDL3)
+  if(WIN32)
+    add_custom_command(TARGET hello_ui POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E
+        $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:hello_ui>>,copy_if_different,true>
+        $<TARGET_RUNTIME_DLLS:hello_ui> $<TARGET_FILE_DIR:hello_ui>
+      COMMAND_EXPAND_LISTS)
+  endif()
+endif()
+set_target_properties(hello_ui PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+if(BUILD_TESTING)
+  add_test(NAME smoke_hello_ui COMMAND hello_ui --smoke)
+  set_tests_properties(smoke_hello_ui PROPERTIES LABELS "ui;smoke" TIMEOUT 30)
+  if(PIXELICA_PLATFORM STREQUAL "SDL3")
+    add_test(NAME smoke_hello_ui_sdl COMMAND hello_ui --hidden --frames 3)
+    set_tests_properties(smoke_hello_ui_sdl PROPERTIES LABELS "ui;sdl3;smoke" TIMEOUT 30)
+  endif()
+endif()
+
+if(TARGET pixelica_shaders)
+  add_executable(hello_shaders hello_shaders/main.c)
+  target_link_libraries(hello_shaders PRIVATE pixelica_shaders pixelica_options)
+  set_target_properties(hello_shaders PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+  if(BUILD_TESTING)
+    add_test(NAME smoke_hello_shaders COMMAND hello_shaders)
+    set_tests_properties(smoke_hello_shaders PROPERTIES LABELS "shaders;smoke" TIMEOUT 30)
+  endif()
+endif()
+
+if(TARGET pixelica_particles2d)
+  add_executable(hello_particles hello_particles/main.c)
+  target_link_libraries(hello_particles PRIVATE pixelica_particles2d pixelica_options)
+  set_target_properties(hello_particles PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+  if(BUILD_TESTING)
+    add_test(NAME smoke_hello_particles COMMAND hello_particles --ticks 90)
+    set_tests_properties(smoke_hello_particles PROPERTIES LABELS "particles;smoke" TIMEOUT 30)
+  endif()
+endif()
+
+# Audio has no renderer dependency: the same example works in every profile.
+if(PIXELICA_BUILD_AUDIO)
+  add_executable(hello_audio hello_audio/main.c)
+  target_link_libraries(hello_audio PRIVATE pixelica_audio pixelica_options)
+  if(TARGET pixelica_audio_sdl3)
+    target_compile_definitions(hello_audio PRIVATE HELLO_AUDIO_SDL3=1)
+    target_link_libraries(hello_audio PRIVATE pixelica_audio_sdl3)
+  endif()
+  set_target_properties(hello_audio PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+  if(WIN32 AND TARGET pixelica_audio_sdl3)
+    add_custom_command(TARGET hello_audio POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E
+        $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:hello_audio>>,copy_if_different,true>
+        $<TARGET_RUNTIME_DLLS:hello_audio> $<TARGET_FILE_DIR:hello_audio>
+      COMMAND_EXPAND_LISTS)
+  endif()
+  if(BUILD_TESTING)
+    add_test(NAME smoke_hello_audio COMMAND hello_audio --smoke)
+    set_tests_properties(smoke_hello_audio PROPERTIES LABELS "audio;smoke" TIMEOUT 15
+      ENVIRONMENT "SDL_AUDIO_DRIVER=dummy;SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy")
+  endif()
+endif()
+
 # Same online module and game simulation in every profile. The optional 2D
 # renderer supplies the arena; without it the demo is a console bot/client.
 if(PIXELICA_BUILD_ONLINE)

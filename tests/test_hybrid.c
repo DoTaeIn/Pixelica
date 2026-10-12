@@ -13,6 +13,7 @@
 #include <stdbool.h>
 
 #include "pixelica/hybrid.h"
+#include "core/context_internal.h"
 #include "test_util.h"
 
 #define W 32
@@ -394,6 +395,9 @@ static void test_bind_output_must_be_disjoint(void)
     expect_bind_rejected(AS_VIEW(depth + plane), ctx);
     /* Frame arena (follows guard2; the arena is 5 KiB, so +64 is well inside it). */
     expect_bind_rejected(AS_VIEW(depth + plane + 64u), ctx);
+    /* The new geometric coverage bitmap is also context-owned storage. */
+    expect_bind_rejected(AS_VIEW(ctx->coverage), ctx);
+    expect_bind_rejected(AS_VIEW(ctx->guards[PIXELICA_GUARD_COUNT - 1u]), ctx);
     /* An address range that would wrap around is refused without any access. */
     expect_bind_rejected(AS_VIEW((uintptr_t)UINTPTR_MAX - sizeof view / 2u), ctx);
     CHECK(pixelica2d_bind_3d(AS_VIEW(ctx_bytes), NULL) == PIXELICA_ERR_INVALID_ARG);

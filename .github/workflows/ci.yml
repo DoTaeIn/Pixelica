@@ -17,6 +17,8 @@
 # trees on both operating systems, and `package-sdk` runs tools/package_sdk.py,
 # which produces the separate 2D and 3D SDK archives. The 2D-only and hybrid
 # targets exist only when their sources do; nothing in this file has been run.
+# Built-in UI is always compiled/tested in every profile and is required in
+# both base ZIPs; sdk_installed_ui checks its independent installed package.
 #
 # Optional jobs (continue-on-error): arm64 cross-compile + qemu, and an
 # ESP-IDF v6.0 compile of firmware/esp32p4. A green optional job still says
@@ -61,6 +63,9 @@ jobs:
           -DPIXELICA_REQUIRE_PYTHON=ON
           -DPIXELICA_BUILD_SKELETON=ON
           -DPIXELICA_BUILD_IK=ON
+          -DPIXELICA_BUILD_AUDIO=ON
+          -DPIXELICA_BUILD_PARTICLES=ON
+          -DPIXELICA_BUILD_SHADERS=ON
       - name: Build
         run: cmake --build build --config ${{ matrix.config }} --parallel
       - name: Test (C tests, python_unittest, asset_reproducibility, esp32p4_lcd_transport, sdk_installed_template)
@@ -93,6 +98,9 @@ jobs:
         run: >
           cmake -S . -B build-2d -DCMAKE_BUILD_TYPE=Release
           -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_BUILD_3D=OFF -DPIXELICA_BUILD_2D=ON
+          -DPIXELICA_BUILD_AUDIO=ON
+          -DPIXELICA_BUILD_PARTICLES=ON
+          -DPIXELICA_BUILD_SHADERS=ON
           -DPIXELICA_WARNINGS_AS_ERRORS=ON -DPIXELICA_REQUIRE_PYTHON=ON
       - run: cmake --build build-2d --config Release --parallel
       - run: ctest --test-dir build-2d -C Release --output-on-failure
@@ -100,6 +108,9 @@ jobs:
         run: >
           cmake -S . -B build-common -DCMAKE_BUILD_TYPE=Release
           -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_BUILD_3D=OFF -DPIXELICA_BUILD_2D=OFF
+          -DPIXELICA_BUILD_AUDIO=ON
+          -DPIXELICA_BUILD_PARTICLES=ON
+          -DPIXELICA_BUILD_SHADERS=ON
           -DPIXELICA_WARNINGS_AS_ERRORS=ON -DPIXELICA_REQUIRE_PYTHON=ON
       - run: cmake --build build-common --config Release --parallel
       - run: ctest --test-dir build-common -C Release --output-on-failure
@@ -121,7 +132,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Script unit tests (arguments, archive members, manifest)
-        run: python -B -I -m unittest discover -s tools/tests -p "test_package_sdk*.py" -v
+        run: python -B -I -m unittest discover -s tools/tests -p "test_package*.py" -v
         env:
           PIXELICA_TOOLS_DIR: ${{ github.workspace }}/tools
       - name: Build and package the 2D and 3D SDK archives
@@ -130,6 +141,20 @@ jobs:
         with:
           name: pixelica-sdk-${{ matrix.os }}
           path: ${{ runner.temp }}/pixelica-package-out/*
+          if-no-files-found: error
+      - name: Build and package optional particles separately
+        run: python -B tools/package_particles.py --build-dir ${{ runner.temp }}/pixelica-particles-build --output-dir ${{ runner.temp }}/pixelica-particles-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixelica-particles-${{ matrix.os }}
+          path: ${{ runner.temp }}/pixelica-particles-out/*
+          if-no-files-found: error
+      - name: Build and package optional CPU shaders separately
+        run: python -B tools/package_shaders.py --build-dir ${{ runner.temp }}/pixelica-shaders-build --output-dir ${{ runner.temp }}/pixelica-shaders-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixelica-shaders-${{ matrix.os }}
+          path: ${{ runner.temp }}/pixelica-shaders-out/*
           if-no-files-found: error
 
   # Explicit, documented SDK flow: install, then build the INSTALLED copy of the
@@ -191,6 +216,9 @@ jobs:
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=${{ matrix.config }}
           -DPIXELICA_PLATFORM=SDL3 -DPIXELICA_FETCH_SDL3=ON
+          -DPIXELICA_BUILD_AUDIO=ON
+          -DPIXELICA_BUILD_PARTICLES=ON
+          -DPIXELICA_BUILD_SHADERS=ON
           -DPIXELICA_BUILD_3D=ON -DPIXELICA_BUILD_2D=ON
           -DPIXELICA_WARNINGS_AS_ERRORS=ON
           -DPIXELICA_REQUIRE_PYTHON=ON
@@ -221,6 +249,9 @@ jobs:
           -DPIXELICA_REQUIRE_PYTHON=ON
           -DPIXELICA_BUILD_SKELETON=ON
           -DPIXELICA_BUILD_IK=ON
+          -DPIXELICA_BUILD_AUDIO=ON
+          -DPIXELICA_BUILD_PARTICLES=ON
+          -DPIXELICA_BUILD_SHADERS=ON
       - name: Build
         run: cmake --build build --parallel
       - name: Test

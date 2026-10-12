@@ -1,0 +1,47 @@
+cmake_minimum_required(VERSION 3.21)
+project(PixelicaParticles VERSION 0.1.0 LANGUAGES C)
+include(GNUInstallDirs)
+
+# This directory is the root of the standalone source ZIP. No engine source,
+# SDL, network access or unrelated optional module is required.
+option(PIXELICA_PARTICLES_BUILD_2D "Build the 2D particle adapter" OFF)
+option(PIXELICA_PARTICLES_BUILD_25D "Build the 3D billboard adapter (needs both base SDKs)" OFF)
+option(PIXELICA_PARTICLES_BUILD_EXAMPLE "Build the offscreen particle example (needs 2D adapter)" OFF)
+option(PIXELICA_INSTALL "Install particle components" ON)
+set(PIXELICA_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/Pixelica")
+find_package(Pixelica 0.1 CONFIG REQUIRED COMPONENTS common)
+if(NOT TARGET pixelica_common)
+  add_library(pixelica_common ALIAS Pixelica::common)
+endif()
+if(NOT TARGET pixelica_options)
+  add_library(pixelica_options INTERFACE)
+endif()
+if(PIXELICA_PARTICLES_BUILD_2D)
+  find_package(Pixelica 0.1 CONFIG REQUIRED COMPONENTS renderer2d)
+  if(NOT TARGET pixelica_renderer2d)
+    add_library(pixelica_renderer2d ALIAS Pixelica::renderer2d)
+  endif()
+endif()
+if(PIXELICA_PARTICLES_BUILD_25D)
+  find_package(Pixelica 0.1 CONFIG REQUIRED COMPONENTS hybrid)
+  if(NOT TARGET pixelica_hybrid)
+    add_library(pixelica_hybrid ALIAS Pixelica::hybrid)
+  endif()
+endif()
+add_subdirectory(modules/particles)
+if(PIXELICA_PARTICLES_BUILD_EXAMPLE)
+  if(NOT TARGET pixelica_particles2d)
+    message(FATAL_ERROR "The particle example needs PIXELICA_PARTICLES_BUILD_2D=ON")
+  endif()
+  add_executable(hello_particles examples/hello_particles/main.c)
+  target_link_libraries(hello_particles PRIVATE Pixelica::particles2d)
+endif()
+if(PIXELICA_INSTALL)
+  # ZIP extraction can give the old and new loaders identical timestamps.
+  # COPY_FILE must replace different contents even in that case.
+  install(CODE "file(COPY_FILE \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaPackage.cmake\"
+    \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${PIXELICA_INSTALL_CMAKEDIR}/PixelicaPackage.cmake\")"
+    COMPONENT particles)
+  install(FILES docs/particles.md
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/Pixelica/docs" COMPONENT particles)
+endif()

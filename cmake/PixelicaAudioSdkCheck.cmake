@@ -1,0 +1,51 @@
+cmake_minimum_required(VERSION 3.21)
+include("${CMAKE_CURRENT_LIST_DIR}/PixelicaWorkDir.cmake")
+pixelica_make_run_dir("${PIXELICA_BINARY_DIR}" "${PIXELICA_SOURCE_DIR}"
+                     "${PIXELICA_SDK_WORK_DIR}" audio_work)
+set(audio_config "${PIXELICA_CONFIG}")
+if(audio_config STREQUAL "")
+  set(audio_config Release)
+endif()
+function(audio_step)
+  execute_process(COMMAND ${ARGV} RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "Audio SDK check failed (${rc})\n${out}\n${err}")
+  endif()
+endfunction()
+set(audio_prefix "${audio_work}/prefix")
+foreach(component common audio)
+  audio_step("${CMAKE_COMMAND}" --install "${PIXELICA_BINARY_DIR}" --config "${audio_config}"
+             --prefix "${audio_prefix}" --component "${component}")
+endforeach()
+# Copy the consumer to ensure it uses only the installed public package.
+file(COPY "${PIXELICA_SOURCE_DIR}/cmake/AudioConsumer/" DESTINATION "${audio_work}/consumer")
+set(audio_args -G "${PIXELICA_SDK_GENERATOR}" "-DCMAKE_BUILD_TYPE=${audio_config}"
+  "-DPixelica_DIR=${audio_prefix}/${PIXELICA_INSTALL_CMAKEDIR}"
+  "-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF" "-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF")
+if(NOT "${PIXELICA_SDK_PLATFORM}" STREQUAL "")
+  list(APPEND audio_args -A "${PIXELICA_SDK_PLATFORM}")
+endif()
+if(NOT "${PIXELICA_SDK_TOOLSET}" STREQUAL "")
+  list(APPEND audio_args -T "${PIXELICA_SDK_TOOLSET}")
+endif()
+if(NOT PIXELICA_SDK_GENERATOR MATCHES "Visual Studio|Xcode|Multi-Config")
+  if(NOT "${PIXELICA_SDK_C_COMPILER}" STREQUAL "")
+    list(APPEND audio_args "-DCMAKE_C_COMPILER=${PIXELICA_SDK_C_COMPILER}")
+  endif()
+  if(NOT "${PIXELICA_SDK_MAKE_PROGRAM}" STREQUAL "")
+    list(APPEND audio_args "-DCMAKE_MAKE_PROGRAM=${PIXELICA_SDK_MAKE_PROGRAM}")
+  endif()
+endif()
+audio_step("${CMAKE_COMMAND}" -S "${audio_work}/consumer" -B "${audio_work}/build" ${audio_args})
+audio_step("${CMAKE_COMMAND}" --build "${audio_work}/build" --config "${audio_config}" --parallel 2)
+audio_step("${CMAKE_CTEST_COMMAND}" --test-dir "${audio_work}/build" -C "${audio_config}" --output-on-failure)
+# When SDL is an installed dependency, also prove the exported output adapter.
+# A fetched SDL does not provide an installed SDL package; core verification still runs.
+if(PIXELICA_AUDIO_HAS_SDL3 AND EXISTS "${PIXELICA_AUDIO_SDL3_DIR}/SDL3Config.cmake")
+  audio_step("${CMAKE_COMMAND}" --install "${PIXELICA_BINARY_DIR}" --config "${audio_config}"
+    --prefix "${audio_prefix}" --component audio_sdl3)
+  audio_step("${CMAKE_COMMAND}" -S "${audio_work}/consumer" -B "${audio_work}/build-sdl" ${audio_args}
+    -DAUDIO_SDK_SDL=ON "-DSDL3_DIR=${PIXELICA_AUDIO_SDL3_DIR}")
+  audio_step("${CMAKE_COMMAND}" --build "${audio_work}/build-sdl" --config "${audio_config}" --parallel 2)
+  audio_step("${CMAKE_CTEST_COMMAND}" --test-dir "${audio_work}/build-sdl" -C "${audio_config}" --output-on-failure)
+endif()

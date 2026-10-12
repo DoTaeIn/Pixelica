@@ -119,3 +119,4 @@ benchmarks/*.sha256
 /docs/*_AUDIT.md
 /docs/2D_25D_PLAN.md
 /docs/verification/
+/docs/concepts/

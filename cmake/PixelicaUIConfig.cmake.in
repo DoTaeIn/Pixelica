@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(Pixelica @PROJECT_VERSION@ CONFIG COMPONENTS common)
+if(NOT TARGET Pixelica::ui)
+  include("${CMAKE_CURRENT_LIST_DIR}/PixelicaUITargets.cmake")
+  set_property(TARGET Pixelica::ui APPEND PROPERTY INTERFACE_LINK_LIBRARIES Pixelica::common)
+endif()
+check_required_components(PixelicaUI)

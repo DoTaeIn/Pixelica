@@ -3,7 +3,7 @@
 How to build a game of your own against Pixelica without touching this repository's sources. The
 SDK is the portable engine core plus its public headers, a CMake package, a copyable starter
 project and the offline asset tool. It is a software renderer: no GPU API is used anywhere, and
-there is no audio, editor, ECS, glTF import or GPU game logic.
+audio is an optional component; there is no editor, ECS, glTF import or GPU game logic.
 
 **Verification status.** The install/export rules, the starter template and the SDK check script run in
 CTest (`sdk_installed_template`). Observed results (see `docs/REMAINING_AUDIT.md`):
@@ -25,8 +25,10 @@ hybrid install adds). `cmake --install` puts this under the prefix:
 | Path | Content |
 |---|---|
 | `include/pixelica/*.h` | common and 3D public headers (`pixelica/pixelica.h` exposes the 3D API; module headers are included explicitly) |
-| `lib/pixelica_common.lib` / `lib/libpixelica_common.a` (`pixelica_commond.*` for Debug) | shared math, input, animation, container and texture assets |
+| `lib/pixelica_common.lib` / `lib/libpixelica_common.a` (`pixelica_commond.*` for Debug) | shared math, input, animation, assets, save, screens and i18n |
 | `lib/pixelica_core.lib` / `lib/libpixelica_core.a` (`pixelica_cored.*` for Debug) | static core library |
+| `include/pixelica/ui.h`, `lib/pixelica_ui.lib` / `lib/libpixelica_ui.a` (`pixelica_uid.*` for Debug) | built-in UI, included in both SDKs |
+| `lib/cmake/PixelicaUI/`, `share/Pixelica/examples/hello_ui/` | independent UI package and copyable menu demo |
 | `lib/cmake/Pixelica/` | package config, shared loader, `PixelicaCommonTargets*.cmake`, `PixelicaTargets*.cmake` and requested module exports |
 | `share/Pixelica/template/` | the starter project (below) |
 | `share/Pixelica/tools/pixelica_pack/` | the asset tool (`pixelica_pack.py`, no third-party packages) |
@@ -40,6 +42,14 @@ one prefix.
 
 The optional `online` component is an exception: it uses Windows WinHTTP or Linux libcurl and threads.
 It is OFF by default and is loaded only when requested. It needs no renderer or SDL3.
+
+The optional `audio` component is a portable mixer with no SDL dependency. Enable `PIXELICA_BUILD_AUDIO=ON`,
+install `common` and `audio`, then use `find_package(Pixelica CONFIG REQUIRED COMPONENTS audio)` and
+`Pixelica::audio`. The same component is available through `find_package(Pixelica2D)`.
+With `PIXELICA_PLATFORM=SDL3`, the separate `audio_sdl3` component adds PC output and WAV file loading.
+Install it too, request `COMPONENTS audio_sdl3`, and link `Pixelica::audio_sdl3`; the consumer must supply an
+installed SDL3 package (3.4.18 or newer). A source-fetch build of SDL is not itself an installed SDL SDK.
+Base 2D/3D ZIPs keep audio OFF. See [`audio.md`](audio.md) for examples and ownership rules.
 
 ## Install
 
@@ -272,8 +282,80 @@ common package files are updated to recognize the new component. See `ONLINE_AUD
 
 Supported by the SDK: Windows and Linux x64, headless or SDL3 platform, C11. Linux arm64 builds and its
 tests run under QEMU. ESP32-P4 through ESP-IDF v6.0 compiles (see `docs/porting.md`) but has not run on a
-board. Raspberry Pi (arm64 Linux with SDL3) has not been tested on a Pi. Not provided: audio, editor, ECS,
+board. Raspberry Pi (arm64 Linux with SDL3) has not been tested on a Pi. Audio is optional. Not provided: editor, ECS,
 scene hierarchy, glTF import, GPU rendering, dynamic game loading, physics beyond swept AABB.
 
 Content limits: textures are sampled nearest-neighbor; the VOX importer accepts a single flat model
 (`VOX ` 150/200) and rejects scene graphs, multiple models, layers and material chunks.
+
+## 선택 파티클 패키지
+
+파티클은 `PIXELICA_BUILD_PARTICLES=ON`으로 켜는 별도 모듈입니다. 기본 SDK 생성기는 항상 OFF로 빌드합니다.
+`tools/package_particles.py --build-dir build-particles-package --output-dir dist-particles`로
+Debug/Release 추가 설치 ZIP과 독립적인 소스 ZIP, SHA256SUMS.txt를 만듭니다.
+
+`PixelicaParticles-0.1.0-windows-AMD64.zip`은 MSVC 2022 x64용입니다. 기존 `Pixelica-0.1.0/` SDK와
+같은 상위 폴더에 마지막으로 풀고 `PixelicaPackage.cmake` 교체를 허용하세요. 공통·렌더러 라이브러리는 교체하지 않습니다.
+다른 컴파일러·플랫폼에서는 `PixelicaParticles-0.1.0-source.zip`의 CMake 프로젝트로 빌드합니다.
+기본 SDK와 컴파일러·아키텍처·Debug/Release 설정을 맞추세요.
+
+```cmake
+find_package(Pixelica CONFIG REQUIRED COMPONENTS particles2d)
+target_link_libraries(my_game PRIVATE Pixelica::particles2d)
+```
+
+| 요청 컴포넌트 | 가져오는 기능 | 필요한 기본 SDK |
+|---|---|---|
+| `particles` | 메모리를 할당하지 않는 시뮬레이션 | common (2D SDK에 포함) |
+| `particles2d` | 2D 카메라·스프라이트 출력 | 2D |
+| `particles25d` | 3D 위치의 알파 빌보드·깊이 검사 | 2D + 3D |
+
+파티클 추가 ZIP의 모든 파일을 받아도 `find_package`로 요청한 기능만 연결합니다.
+자세한 API와 사용 예는 [particles.md](particles.md)에 있습니다.
+
+## 선택 쉐이더 패키지
+
+쉐이더는 기본 SDK에 포함되지 않습니다. `PIXELICA_BUILD_SHADERS`의 기본값은 `OFF`입니다.
+`tools/package_shaders.py --build-dir build-shaders-package --output-dir dist-shaders`가
+`PixelicaShaders-<version>-<platform>.zip`과 `PixelicaShaders-<version>-source.zip`을 생성합니다.
+바이너리에는 Debug/Release 라이브러리가 모두 들어 있으며 기본 SDK와 컴파일러·아키텍처를 맞춰야 합니다.
+
+바이너리 ZIP의 루트는 기본 SDK와 같은 `Pixelica-<version>/`입니다. 같은 부모 폴더에 풀어 합치세요.
+`common` 라이브러리를 사용하는 단일 타깃이어서 2D 또는 3D 기본 SDK 중 하나만 있어도 동작합니다.
+다른 선택 모듈과 설치 순서를 바꾸어도 기본 CMake 로더를 덮어쓰지 않습니다.
+
+```cmake
+find_package(PixelicaShaders CONFIG REQUIRED)
+target_link_libraries(my_game PRIVATE Pixelica::shaders)
+```
+
+기존 `Pixelica`의 컴포넌트 목록과 독립된 패키지이므로 `find_package(Pixelica COMPONENTS shaders)`는
+사용하지 않습니다. 자세한 API·스크래치 메모리·2D/3D 연결은 [shaders.md](shaders.md)에 있습니다.
+
+## 기본 UI 패키지
+
+UI는 `tools/package_sdk.py`가 만드는 **2D·3D ZIP 모두에 기본 포함**됩니다. OFF 옵션이나 별도 UI ZIP은 없습니다.
+`common` 또는 `core` 컴포넌트만 설치해도 UI 헤더·정적 라이브러리·독립 CMake 설정·문서·예제를 함께 설치합니다.
+기존 UI가 없는 SDK 사용자는 새 기본 ZIP을 받으세요. 선택 오디오·파티클·쉐이더의 설치 여부와 관계없이 동작합니다.
+
+```cmake
+find_package(PixelicaUI 0.1 CONFIG REQUIRED)
+target_link_libraries(my_game PRIVATE Pixelica::ui)
+```
+
+`PixelicaUI`는 common만 가져오며 렌더러나 다른 선택 모듈을 자동으로 링크하지 않습니다.
+`find_package(Pixelica COMPONENTS ui)` 대신 위의 독립 패키지 이름을 사용하세요.
+2D·3D ZIP의 UI 파일은 바이트 단위로 같아서 같은 폴더에 둘 다 풀어도 충돌하지 않습니다.
+UI의 코드가 필요한 게임만 타깃에 링크하면 됩니다.
+
+설치된 `share/Pixelica/examples/hello_ui/`를 복사해 빌드하면 SDK만 사용하는 메뉴 예제가 됩니다.
+기본은 창 없는 자동 검사이며 `PIXELICA_UI_DEMO_SDL3=ON`과 설치된 SDL3를 제공하면 마우스·키보드로 조작합니다.
+자세한 실행 명령과 글꼴·입력·메모리 계약은 [ui.md](ui.md)를 참고하세요.
+
+## 렌더 타깃과 재질 확장
+
+색·깊이 스냅샷과 샘플링(`pixelica/framebuffer.h`)은 기본 `Pixelica::common`에 포함됩니다.
+2D SDK도 사용할 수 있습니다. [framebuffer.md](framebuffer.md)에 stride·수명·메모리 비용을 설명합니다.
+3D SDK의 `Pixelica::core`는 offscreen 컨텍스트 어댑터와 `pixelica_draw_mesh_effects()`를 제공합니다.
+재질 Bilinear·커스텀 픽셀 처리·월드 클립 평면은 [render_effects.md](render_effects.md)를 참고하세요.
+선택 쉐이더 패키지를 추가로 설치할 필요는 없습니다.

@@ -42,7 +42,7 @@ static bool scale_is_valid(PIXELICA_Vec2 s)
 /*
  * True when [out, out + out_bytes) intersects the engine-owned block of `ctx`.
  * That block is contiguous from the PIXELICA_Context struct itself to the end of
- * the last guard (struct, guard0, color, guard1, depth, guard2, arena, guard3)
+ * the last guard (including the coverage bitmap and all memory guards)
  * for heap and caller-owned contexts alike. All arithmetic is on uintptr_t
  * with the wrap checked before every addition; a range that cannot be
  * represented is reported as overlapping. `out` is never dereferenced.
@@ -51,7 +51,7 @@ static bool overlaps_engine_block(const void *out, size_t out_bytes, const PIXEL
 {
     const uintptr_t block_lo = (uintptr_t)ctx;
     const uintptr_t out_lo = (uintptr_t)out;
-    uintptr_t block_hi = (uintptr_t)ctx->guards[3];
+    uintptr_t block_hi = (uintptr_t)ctx->guards[PIXELICA_GUARD_COUNT - 1u];
 
     if (block_hi < block_lo || block_hi > UINTPTR_MAX - PIXELICA_GUARD_BYTES ||
         out_lo > UINTPTR_MAX - (uintptr_t)out_bytes) {
@@ -67,7 +67,7 @@ PIXELICA_Status pixelica2d_bind_3d(PIXELICA2D_Context *out, PIXELICA_Context *ct
     PIXELICA2D_Context view;
     PIXELICA_Status status;
 
-    if (out == NULL || !pixelica_context_valid(ctx) || !ctx->in_frame ||
+    if (out == NULL || !pixelica_context_valid(ctx) || ctx->pixel_callback_active || !ctx->in_frame ||
         ctx->color == NULL || ctx->depth == NULL ||
         overlaps_engine_block(out, sizeof *out, ctx)) {
         return PIXELICA_ERR_INVALID_ARG;

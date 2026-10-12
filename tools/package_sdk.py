@@ -9,6 +9,8 @@
         common library) plus the opt-in hybrid 2.5D module. Hybrid needs the
         2D SDK in the same prefix; the 3D core does not.
 
+Both always include the UI library, headers, independent PixelicaUI CMake
+package, guide and menu example. UI has no build switch or separate ZIP.
 Both archives have the same top-level directory (Pixelica-<version>/), so
 extracting both into one directory MERGES them into one prefix. Files that
 exist in both (package configs, common headers and library) are byte-identical;
@@ -71,10 +73,11 @@ RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 VERSION_RE = re.compile(r"project\s*\(\s*Pixelica\s+VERSION\s+(\d+\.\d+\.\d+)", re.IGNORECASE)
 
 COMMON_HEADERS = ("status.h", "input.h", "platform.h", "math.h", "animation.h",
-                  "image.h", "assets_common.h")
+                  "image.h", "draw_options.h", "assets_common.h", "save.h", "screens.h", "i18n.h", "camera.h", "debug.h", "chunks.h", "framebuffer.h", "collision2d.h")
 HEADERS_3D = ("pixelica.h", "renderer.h", "assets.h", "scene.h")
 CMAKE_DIR_3D = "cmake/Pixelica"  # below the library directory (lib, lib64, ...)
 CMAKE_DIR_2D = "cmake/Pixelica2D"
+CMAKE_DIR_UI = "cmake/PixelicaUI"
 
 EPOCH_FLOOR = 315532800  # 1980-01-01, the earliest ZIP timestamp
 
@@ -94,8 +97,8 @@ class Variant:
 
 
 VARIANTS = (
-    Variant('Pixelica2D', ('common', 'renderer2d'), ('README.md', 'docs/sdk.md', 'docs/2d.md', 'docs/api.md', 'docs/architecture.md', 'docs/DEVELOPMENT.md', 'docs/asset_format.md', 'docs/animation.md', 'docs/rigging.md', 'docs/input_manager.md', 'docs/online.md', 'docs/porting.md', 'docs/art_style.md')),
-    Variant('Pixelica3D', ('core', 'hybrid'), ('README.md', 'docs/sdk.md', 'docs/2d.md', 'docs/api.md', 'docs/architecture.md', 'docs/DEVELOPMENT.md', 'docs/asset_format.md', 'docs/animation.md', 'docs/rigging.md', 'docs/input_manager.md', 'docs/online.md', 'docs/porting.md', 'docs/art_style.md')),
+    Variant('Pixelica2D', ('common', 'renderer2d'), ('README.md', 'docs/sdk.md', 'docs/2d.md', 'docs/api.md', 'docs/architecture.md', 'docs/DEVELOPMENT.md', 'docs/asset_format.md', 'docs/animation.md', 'docs/rigging.md', 'docs/input_manager.md', 'docs/online.md', 'docs/audio.md', 'docs/particles.md', 'docs/shaders.md', 'docs/porting.md', 'docs/art_style.md', 'docs/ui.md')),
+    Variant('Pixelica3D', ('core', 'hybrid'), ('README.md', 'docs/sdk.md', 'docs/2d.md', 'docs/api.md', 'docs/architecture.md', 'docs/DEVELOPMENT.md', 'docs/asset_format.md', 'docs/animation.md', 'docs/rigging.md', 'docs/input_manager.md', 'docs/online.md', 'docs/audio.md', 'docs/particles.md', 'docs/shaders.md', 'docs/porting.md', 'docs/art_style.md', 'docs/ui.md')),
 )
 
 
@@ -327,6 +330,9 @@ def configure_options(single_config: Optional[str]) -> List[str]:
         "-DPIXELICA_BUILD_IK=OFF",
         "-DPIXELICA_BUILD_INPUT_MANAGER=OFF",
         "-DPIXELICA_BUILD_ONLINE=OFF",
+        "-DPIXELICA_BUILD_AUDIO=OFF",
+        "-DPIXELICA_BUILD_PARTICLES=OFF",
+        "-DPIXELICA_BUILD_SHADERS=OFF",
         "-DPIXELICA_INSTALL=ON",
         "-DPIXELICA_SANITIZE=OFF",
         "-DPIXELICA_WARNINGS_AS_ERRORS=ON",
@@ -485,6 +491,19 @@ def check_variant_files(variant: str, files: Iterable[str], configs: Sequence[st
     for name in base_config + exports_common:
         need_suffix(CMAKE_DIR_3D, name)
     need_lib("pixelica_common")
+    # UI is a standard part of both SDKs, with independent package discovery.
+    need("include/pixelica/ui.h")
+    need_lib("pixelica_ui")
+    for name in ["PixelicaUIConfig.cmake", "PixelicaUIConfigVersion.cmake",
+                 "PixelicaUITargets.cmake"] + [
+                     "PixelicaUITargets-%s.cmake" % c.lower() for c in configs]:
+        need_suffix(CMAKE_DIR_UI, name)
+    need("share/Pixelica/docs/ui.md")
+    need("share/Pixelica/examples/hello_ui/CMakeLists.txt")
+    need("share/Pixelica/examples/hello_ui/main.c")
+    for guide in ("save.md", "screens.md", "i18n.md", "texture_options.md", "camera.md", "debug.md", "chunks.md", "material_layers.md", "framebuffer.md", "render_effects.md"):
+        need("share/Pixelica/docs/" + guide)
+    need("share/Pixelica/tools/pixelica_font.py")
 
     if variant == "Pixelica2D":
         need("include/pixelica/renderer2d.h")
@@ -501,7 +520,7 @@ def check_variant_files(variant: str, files: Iterable[str], configs: Sequence[st
         forbid_name("PixelicaTargets")
         forbid_name("PixelicaHybridTargets")
         forbid_dir("share/Pixelica/template/")
-        forbid_dir("share/Pixelica/tools/")
+        forbid_dir("share/Pixelica/tools/pixelica_pack/")
     elif variant == "Pixelica3D":
         for header in HEADERS_3D + ("hybrid.h",):
             need("include/pixelica/" + header)
@@ -585,7 +604,7 @@ def build_manifest(variant: Variant, version: str, stage: pathlib.Path, files: S
         "install_components": list(variant.components),
         "configurations": list(CONFIGS),
         "generator": generator or "default",
-        "package_configs": ["find_package(Pixelica CONFIG)"] +
+        "package_configs": ["find_package(Pixelica CONFIG)", "find_package(PixelicaUI CONFIG)"] +
                            (["find_package(Pixelica2D CONFIG)"] if variant.name == "Pixelica2D" else []),
         "missing_documents": sorted(missing_docs),
         "files": entries,

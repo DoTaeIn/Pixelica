@@ -25,11 +25,13 @@
 #   ik          PixelicaIKTargets.cmake           Pixelica::ik (needs common)
 #   input_manager  PixelicaInputManagerTargets.cmake  Pixelica::input_manager (needs common)
 #   online      PixelicaOnlineTargets.cmake       Pixelica::online (common + OS HTTPS/threads)
+#   audio       PixelicaAudioTargets.cmake        Pixelica::audio (common)
+#   audio_sdl3  PixelicaAudioSDL3Targets.cmake    Pixelica::audio_sdl3 (audio + SDL3)
 #
 # Pixelica with no COMPONENTS: core if its export exists, else renderer2d, else
 # common. Pixelica2D with no COMPONENTS: renderer2d (Pixelica2D::core); its
 # COMPONENTS may be core (= renderer2d), renderer2d, common and, only when
-# requested explicitly, input_manager and online (the same Pixelica:: targets
+# requested explicitly, input_manager, online, audio and audio_sdl3 (Pixelica:: targets
 # as through find_package(Pixelica); shared by the 2D and 3D profiles).
 # Only the requested components and their dependencies are imported.
 # A required component that is missing or unknown makes find_package() fail; an
@@ -55,6 +57,16 @@ function(_pixelica_pkg_describe comp out_var)
     set(${out_var} "PixelicaInputManagerTargets.cmake;Pixelica::input_manager;common" PARENT_SCOPE)
   elseif(comp STREQUAL "online")
     set(${out_var} "PixelicaOnlineTargets.cmake;Pixelica::online;common" PARENT_SCOPE)
+  elseif(comp STREQUAL "audio")
+    set(${out_var} "PixelicaAudioTargets.cmake;Pixelica::audio;common" PARENT_SCOPE)
+  elseif(comp STREQUAL "particles")
+    set(${out_var} "PixelicaParticlesTargets.cmake;Pixelica::particles;common" PARENT_SCOPE)
+  elseif(comp STREQUAL "particles2d")
+    set(${out_var} "PixelicaParticles2DTargets.cmake;Pixelica::particles2d;particles;renderer2d" PARENT_SCOPE)
+  elseif(comp STREQUAL "particles25d")
+    set(${out_var} "PixelicaParticles25DTargets.cmake;Pixelica::particles25d;particles;hybrid" PARENT_SCOPE)
+  elseif(comp STREQUAL "audio_sdl3")
+    set(${out_var} "PixelicaAudioSDL3Targets.cmake;Pixelica::audio_sdl3;audio" PARENT_SCOPE)
   else()
     set(${out_var} "" PARENT_SCOPE)
   endif()
@@ -109,6 +121,12 @@ function(_pixelica_pkg_load comp out_var)
         return()
       endif()
     endif()
+    if(comp STREQUAL "audio_sdl3")
+      find_package(SDL3 3.4.18 CONFIG QUIET)
+      if(NOT SDL3_FOUND OR NOT TARGET SDL3::SDL3)
+        return()
+      endif()
+    endif()
     include("${_pixelica_pkg_dir}/${export_file}")
     if(NOT TARGET ${target})
       return()
@@ -121,6 +139,9 @@ function(_pixelica_pkg_load comp out_var)
       list(GET dep_info 1 dep_target)
       set_property(TARGET ${target} APPEND PROPERTY INTERFACE_LINK_LIBRARIES "${dep_target}")
     endforeach()
+    if(comp STREQUAL "audio_sdl3")
+      set_property(TARGET ${target} APPEND PROPERTY INTERFACE_LINK_LIBRARIES SDL3::SDL3)
+    endif()
   endif()
 
   if(target STREQUAL "Pixelica::core")
@@ -162,11 +183,15 @@ else()
     set(_pixelica_actual "${_pixelica_component}")
     if(_pixelica_pkg_name STREQUAL "Pixelica2D")
       # The Pixelica2D package offers the 2D renderer as "core" plus "common", and
-      # the shared optional input_manager module when asked for by name.
+      # the shared optional modules when asked for by name.
       if(_pixelica_component STREQUAL "core")
         set(_pixelica_actual renderer2d)
       elseif(NOT _pixelica_component STREQUAL "renderer2d" AND NOT _pixelica_component STREQUAL "common"
              AND NOT _pixelica_component STREQUAL "input_manager"
+             AND NOT _pixelica_component STREQUAL "audio"
+             AND NOT _pixelica_component STREQUAL "particles"
+             AND NOT _pixelica_component STREQUAL "particles2d"
+             AND NOT _pixelica_component STREQUAL "audio_sdl3"
              AND NOT _pixelica_component STREQUAL "online")
         set(_pixelica_actual "")
       endif()

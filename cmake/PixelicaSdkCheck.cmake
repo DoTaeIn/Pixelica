@@ -310,7 +310,7 @@ if(NOT (PIXELICA_EXPECT_3D AND PIXELICA_EXPECT_2D))
   return()
 endif()
 
-set(common_headers status.h input.h platform.h math.h animation.h image.h assets_common.h)
+set(common_headers status.h input.h platform.h math.h animation.h image.h draw_options.h assets_common.h save.h screens.h i18n.h camera.h debug.h chunks.h framebuffer.h collision2d.h)
 set(only_3d_headers pixelica.h renderer.h assets.h scene.h)
 list(TRANSFORM common_headers PREPEND "include/pixelica/" OUTPUT_VARIABLE common_header_paths)
 list(TRANSFORM only_3d_headers PREPEND "include/pixelica/" OUTPUT_VARIABLE only_3d_header_paths)
@@ -358,17 +358,42 @@ set(consumer_2d_main [=[
 #include <stddef.h>
 #include <stdint.h>
 #include "pixelica/renderer2d.h"
+#include "pixelica/framebuffer.h"
+#include "pixelica/collision2d.h"
 int main(void)
 {
     uint16_t px[16];
     PIXELICA2D_Surface surface = {px, 4, 4, 4, NULL, 0};
     PIXELICA2D_Context ctx;
+    PIXELICA_Body2D body = {{{0.0f, 0.0f}, {1.0f, 1.0f}}, {0.0f, 0.0f}, 0u, 0u};
+    const PIXELICA_AABB2D floor_box = {{-10.0f, 1.0f}, {10.0f, 2.0f}};
+    uint16_t snapshot[16], sampled;
+    PIXELICA_FrameView source = {px, NULL, 4, 4, 4}, copied;
+    const uint16_t texels[1] = {0xffffu};
+    const uint8_t alpha[1] = {128u};
+    PIXELICA_Texture tex = {texels, 1, 1};
+    PIXELICA2D_Sprite sprite;
+    PIXELICA_DrawOptions options = pixelica_draw_options_default();
     float m[16];
     if (pixelica2d_init(&ctx, &surface) != PIXELICA_OK) return 1;
     if (pixelica2d_clear(&ctx, 0x1234u) != PIXELICA_OK) return 2;
     if (px[15] != 0x1234u) return 3;
+    if (pixelica2d_sprite_init(&sprite, &tex) != PIXELICA_OK) return 7;
+    options.wrap_u = PIXELICA_WRAP_REPEAT;
+    options.alpha_mode = PIXELICA_ALPHA_BLEND;
+    options.texture_alpha = alpha;
+    options.texture_alpha_bytes = 1u;
+    if (pixelica2d_draw_sprite_ex(&ctx, &sprite, &options) != PIXELICA_OK) return 6;
+    if (pixelica_frame_copy(&source, snapshot, 16u, NULL, 0u, &copied) != PIXELICA_OK) return 8;
+    if (pixelica_frame_sample_color(&copied, 0.875f, 0.875f, PIXELICA_WRAP_CLAMP,
+        PIXELICA_WRAP_CLAMP, PIXELICA_FILTER_BILINEAR, &sampled) != PIXELICA_OK) return 9;
+    if (sampled != 0x1234u) return 10;
     pixelica_mat4_identity(m);
     if (m[0] != 1.0f) return 4;
+    if (pixelica_body2d_step(&body, 1.0f / 60.0f, 600.0f, 220.0f, 600.0f,
+        false, &floor_box, 1u) != PIXELICA_OK || !body.grounded) return 11;
+    if (pixelica_body2d_step(&body, 1.0f / 60.0f, 600.0f, 220.0f, 600.0f,
+        true, &floor_box, 1u) != PIXELICA_OK || body.velocity.y >= 0.0f) return 12;
     return pixelica_crc32(NULL, 0) == 0u ? 0 : 5;
 }
 ]=])
@@ -399,11 +424,36 @@ set(consumer_3d_main [=[
 #include "pixelica/pixelica.h"
 int main(void)
 {
-    PIXELICA_Config cfg = {8, 8, 1, 1, 64};
+    PIXELICA_Config cfg = {8, 8, 3, 1, 64};
+    PIXELICA_Context *ctx = NULL;
+    PIXELICA_Mesh mesh = {NULL, 0, NULL, 0, 0};
+    PIXELICA_DrawOptions options = pixelica_draw_options_default();
+    PIXELICA_MaterialLayers layers = {0};
+    PIXELICA_ColorRGBA8 white = {255u, 255u, 255u, 255u};
+    PIXELICA_MeshEffects effects = {0};
+    PIXELICA_FrameView view, snapshot;
+    PIXELICA_Texture frame_texture;
+    uint16_t color_copy[64], depth_copy[64], sampled;
     size_t bytes = 0;
     float m[16];
     if (pixelica_memory_requirement(&cfg, &bytes) != PIXELICA_OK || bytes == 0) return 1;
     pixelica_mat4_identity(m);
+    if (pixelica_create(&cfg, NULL, &ctx) != PIXELICA_OK) return 3;
+    pixelica_begin_frame(ctx, 0u);
+    options.alpha_mode = PIXELICA_ALPHA_BLEND;
+    options.opacity = 128u;
+    layers.vertex_colors = &white;
+    if (pixelica_draw_mesh_options(ctx, &mesh, m, NULL, &options) != PIXELICA_OK) return 4;
+    if (pixelica_draw_mesh_layers(ctx, &mesh, m, &layers, &options) != PIXELICA_OK) return 6;
+    effects.filter = PIXELICA_FILTER_BILINEAR;
+    if (pixelica_draw_mesh_effects(ctx, &mesh, m, &layers, &options, &effects) != PIXELICA_OK) return 7;
+    if (pixelica_end_frame(ctx) != PIXELICA_OK) return 5;
+    if (pixelica_frame_view(ctx, &view) != PIXELICA_OK) return 8;
+    if (pixelica_frame_texture(ctx, &frame_texture) != PIXELICA_OK || frame_texture.width != 8u) return 9;
+    if (pixelica_frame_copy(&view, color_copy, 64u, depth_copy, 64u, &snapshot) != PIXELICA_OK) return 10;
+    if (pixelica_frame_sample_depth(&snapshot, 0.5f, 0.5f, PIXELICA_WRAP_CLAMP,
+        PIXELICA_WRAP_CLAMP, &sampled) != PIXELICA_OK || sampled != PIXELICA_DEPTH_CLEAR) return 11;
+    pixelica_destroy(ctx);
     return (m[0] == 1.0f && pixelica_crc32(NULL, 0) == 0u) ? 0 : 2;
 }
 ]=])
