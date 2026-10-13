@@ -270,3 +270,15 @@ tests/              C 테스트
 - [`docs/particles.md`](docs/particles.md): 선택 파티클 모듈, 별도 다운로드·설치·프리셋
 - [`docs/shaders.md`](docs/shaders.md): 선택 CPU 쉐이더, 별도 다운로드·설치·사용자 픽셀 효과
 - [`docs/asset_format.md`](docs/asset_format.md), [`docs/art_style.md`](docs/art_style.md)
+
+## 개발자 문서 웹사이트
+
+`website/`에 Docusaurus 기반 Pixellica 개발자 포털이 있습니다. 3단 문서 레이아웃, 라이트/다크 모드, 로컬 검색, Sandpack 웹 데모와 인터랙티브 구조도를 제공합니다. 기존 `docs/` 원문과 실제 C 예제는 사이트 빌드 시 자동으로 가져옵니다.
+
+```sh
+cd website
+npm ci
+npm start
+```
+
+문서 작성, 컴포넌트 추가, 버전 관리와 GitHub Pages 배포는 [website/README.md](website/README.md)를 참고하세요.

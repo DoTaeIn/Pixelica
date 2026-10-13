@@ -1,0 +1,40 @@
+---
+title: 첫 프레임 만들기
+---
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Getting Started
+
+CMake 3.21 이상과 C11 컴파일러를 준비하세요. 다음은 저장소 README의 헤드리스 빌드 흐름입니다.
+
+<Tabs groupId="platform">
+<TabItem value="unix" label="macOS / Linux">
+
+```bash
+cmake -S . -B build-docs-demo -DCMAKE_BUILD_TYPE=Debug -DPIXELICA_PLATFORM=HEADLESS
+cmake --build build-docs-demo
+ctest --test-dir build-docs-demo --output-on-failure
+./build-docs-demo/hello_cube --frames 10
+```
+
+</TabItem>
+<TabItem value="windows" label="Windows">
+
+```powershell
+cmake -S . -B build-docs-demo -DPIXELICA_PLATFORM=HEADLESS
+cmake --build build-docs-demo --config Debug
+ctest --test-dir build-docs-demo -C Debug --output-on-failure
+.\build-docs-demo\Debug\hello_cube.exe --frames 10
+```
+
+</TabItem>
+</Tabs>
+
+## 실행 결과
+
+HEADLESS에서는 창을 열지 않고 마지막 프레임의 해시를 출력합니다. SDL3 창 실행과 선택 모듈은 [저장소 README](https://github.com/DoTaeIn/Pixelica#readme)를 확인하세요.
+
+## 다음 단계
+
+[실제 C 예제](../examples/native.mdx)를 읽거나 [구조도](../architecture/overview.mdx)를 탐색하세요.
