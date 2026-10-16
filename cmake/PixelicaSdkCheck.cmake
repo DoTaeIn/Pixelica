@@ -310,7 +310,7 @@ if(NOT (PIXELICA_EXPECT_3D AND PIXELICA_EXPECT_2D))
   return()
 endif()
 
-set(common_headers status.h input.h platform.h math.h animation.h image.h draw_options.h assets_common.h save.h screens.h i18n.h camera.h debug.h chunks.h framebuffer.h collision2d.h)
+set(common_headers status.h input.h platform.h math.h animation.h anim_clip.h image.h draw_options.h assets_common.h save.h storage.h app.h screens.h i18n.h camera.h debug.h chunks.h framebuffer.h light.h collision2d.h)
 set(only_3d_headers pixelica.h renderer.h assets.h scene.h)
 list(TRANSFORM common_headers PREPEND "include/pixelica/" OUTPUT_VARIABLE common_header_paths)
 list(TRANSFORM only_3d_headers PREPEND "include/pixelica/" OUTPUT_VARIABLE only_3d_header_paths)
@@ -357,9 +357,71 @@ target_link_libraries(consumer PRIVATE Pixelica2D::core)
 set(consumer_2d_main [=[
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
+#include "pixelica/light.h"
 #include "pixelica/renderer2d.h"
 #include "pixelica/framebuffer.h"
 #include "pixelica/collision2d.h"
+#include "pixelica/app.h"
+#include "pixelica/storage.h"
+/* Lifecycle and storage are part of the common library, so a 2D-only SDK
+   must provide them too (no filesystem is touched here). */
+static int consumer_lifecycle(void)
+{
+    PIXELICA_App app;
+    PIXELICA_AppConfig app_config;
+    memset(&app, 0, sizeof app);
+    memset(&app_config, 0, sizeof app_config);
+    if (!pixelica_storage_game_id_valid("consumer-2d")) return 20;
+    if (pixelica_storage_game_id_valid("../escape")) return 21;
+    if (pixelica_app_init(&app, &app_config) != PIXELICA_OK) return 22;
+    if (!pixelica_app_should_update(&app)) return 23;
+    if (pixelica_app_pause(&app) != PIXELICA_OK) return 24;
+    if (pixelica_app_should_update(&app)) return 25;
+    if (pixelica_app_state(&app) != PIXELICA_APP_PAUSED) return 26;
+    if (pixelica_app_suspend(&app) != PIXELICA_OK) return 27;
+    if (pixelica_app_resume(&app) != PIXELICA_OK) return 28;
+    if (pixelica_app_state(&app) != PIXELICA_APP_PAUSED) return 29;
+    if (pixelica_app_shutdown(&app) != PIXELICA_OK) return 30;
+    if (pixelica_app_shutdown(&app) != PIXELICA_ERR_INVALID_ARG) return 31;
+    return 0;
+}
+/* The pixel-lighting tools are part of the common library, so a 2D-only SDK
+   must ship and link them too (masks, tints, receiver quads, bloom). */
+static int consumer_light(void)
+{
+    uint8_t alpha[16];
+    uint16_t tint[16], target[16], scratch[6 * 16];
+    PIXELICA_LightMaskDesc desc;
+    PIXELICA_LightMask mask;
+    PIXELICA_Texture tex;
+    PIXELICA_LightSurface surface;
+    PIXELICA_LightQuad quad;
+    PIXELICA_LightPlacement place;
+    PIXELICA_BloomDesc bloom;
+    size_t need;
+    int i;
+    if (pixelica_light_mask_default(PIXELICA_LIGHT_SHAPE_ELLIPSE, &desc) != PIXELICA_OK) return 40;
+    desc.width = 4u; desc.height = 4u; desc.softness = 0.5f; desc.peak = 255u;
+    if (pixelica_light_mask_build(&desc, alpha, sizeof alpha, &mask) != PIXELICA_OK) return 41;
+    if (pixelica_light_tint_fill(0xF800u, 4u, 4u, tint, 16u, &tex) != PIXELICA_OK) return 42;
+    if (tex.width != 4u || tint[15] != 0xF800u) return 43;
+    memset(&place, 0, sizeof place);
+    place.u_axis.x = 1.0f; place.v_axis.z = 1.0f; place.normal.y = 1.0f;
+    if (pixelica_light_quad(&place, &quad) != PIXELICA_OK) return 44;
+    if (pixelica_light_quad_centered(place.origin, place.normal, place.u_axis,
+                                     1.0f, 1.0f, 0.01f, &quad) != PIXELICA_OK) return 45;
+    for (i = 0; i < 16; ++i) target[i] = 0u;
+    target[5] = 0xFFFFu;
+    surface.pixels = target; surface.width = 4u; surface.height = 4u; surface.stride = 4u;
+    if (pixelica_bloom_default(&bloom) != PIXELICA_OK) return 46;
+    bloom.mask = &mask; bloom.downsample = 1u; bloom.radius = 1u; bloom.passes = 1u;
+    bloom.intensity = 255u;
+    need = pixelica_bloom_scratch_pixels(&surface, &bloom);
+    if (need == 0u || need > sizeof scratch / sizeof scratch[0]) return 47;
+    if (pixelica_bloom_apply(&surface, &bloom, scratch, need) != PIXELICA_OK) return 48;
+    return target[6] != 0u ? 0 : 49; /* the glow reached the neighbour */
+}
 int main(void)
 {
     uint16_t px[16];
@@ -394,6 +456,8 @@ int main(void)
         false, &floor_box, 1u) != PIXELICA_OK || !body.grounded) return 11;
     if (pixelica_body2d_step(&body, 1.0f / 60.0f, 600.0f, 220.0f, 600.0f,
         true, &floor_box, 1u) != PIXELICA_OK || body.velocity.y >= 0.0f) return 12;
+    { int lifecycle_rc = consumer_lifecycle(); if (lifecycle_rc != 0) return lifecycle_rc; }
+    { int light_rc = consumer_light(); if (light_rc != 0) return light_rc; }
     return pixelica_crc32(NULL, 0) == 0u ? 0 : 5;
 }
 ]=])
@@ -421,10 +485,47 @@ target_link_libraries(consumer PRIVATE Pixelica::core)
 ]=])
 set(consumer_3d_main [=[
 #include <stddef.h>
+#include <string.h>
+#include "pixelica/light.h"
 #include "pixelica/pixelica.h"
+/* The 3D light-patch helpers and the emissive-mask hook of the installed SDK. */
+static int consumer_patch(PIXELICA_Context *ctx)
+{
+    uint8_t alpha[16], recorded[64];
+    uint16_t tint[16];
+    PIXELICA_LightMaskDesc desc;
+    PIXELICA_LightDraw light;
+    PIXELICA_LightPlacement place;
+    PIXELICA_EmissiveMask emissive;
+    PIXELICA_MeshEffects fx;
+    memset(&light, 0, sizeof light);
+    memset(&fx, 0, sizeof fx);
+    memset(&emissive, 0, sizeof emissive);
+    if (pixelica_light_mask_default(PIXELICA_LIGHT_SHAPE_RECT, &desc) != PIXELICA_OK) return 20;
+    desc.width = 4u; desc.height = 4u; desc.softness = 0.0f; desc.fade_v = 0.0f;
+    desc.peak = 255u; desc.panes_x = 1u; desc.panes_y = 1u; desc.bar = 0.0f;
+    if (pixelica_light_mask_build(&desc, alpha, sizeof alpha, &light.mask) != PIXELICA_OK) return 21;
+    if (pixelica_light_tint_fill(0x4208u, 4u, 4u, tint, 16u, &light.tint) != PIXELICA_OK) return 22;
+    memset(&place, 0, sizeof place);
+    place.origin.x = -1.0f; place.origin.y = -1.0f;
+    place.u_axis.x = 2.0f; place.v_axis.y = 2.0f; place.normal.z = 1.0f;
+    if (pixelica_light_quad(&place, &light.quad) != PIXELICA_OK) return 23;
+    light.mode = PIXELICA_ALPHA_ADD;
+    light.opacity = 255u;
+    emissive.alpha = recorded;
+    emissive.width = 8u; emissive.height = 8u; emissive.stride = 8u;
+    if (pixelica_emissive_mask_clear(&emissive) != PIXELICA_OK) return 24;
+    fx.pixel = pixelica_emissive_mask_pixel;
+    fx.userdata = &emissive;
+    if (pixelica_draw_light(ctx, &light, &fx) != PIXELICA_OK) return 25;
+    if (emissive.written == 0u || recorded[0] != 255u) return 26;
+    if (pixelica_color_buffer(ctx)[0] != 0x4208u) return 27;
+    if (pixelica_depth_buffer(ctx)[0] != PIXELICA_DEPTH_CLEAR) return 28;
+    return 0;
+}
 int main(void)
 {
-    PIXELICA_Config cfg = {8, 8, 3, 1, 64};
+    PIXELICA_Config cfg = {8, 8, 8, 8, 8 * PIXELICA_ARENA_BYTES_PER_VERTEX};
     PIXELICA_Context *ctx = NULL;
     PIXELICA_Mesh mesh = {NULL, 0, NULL, 0, 0};
     PIXELICA_DrawOptions options = pixelica_draw_options_default();
@@ -447,6 +548,7 @@ int main(void)
     if (pixelica_draw_mesh_layers(ctx, &mesh, m, &layers, &options) != PIXELICA_OK) return 6;
     effects.filter = PIXELICA_FILTER_BILINEAR;
     if (pixelica_draw_mesh_effects(ctx, &mesh, m, &layers, &options, &effects) != PIXELICA_OK) return 7;
+    { int patch_rc = consumer_patch(ctx); if (patch_rc != 0) return patch_rc; }
     if (pixelica_end_frame(ctx) != PIXELICA_OK) return 5;
     if (pixelica_frame_view(ctx, &view) != PIXELICA_OK) return 8;
     if (pixelica_frame_texture(ctx, &frame_texture) != PIXELICA_OK || frame_texture.width != 8u) return 9;

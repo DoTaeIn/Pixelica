@@ -297,7 +297,7 @@ static void test_invalid(void)
     o = pixelica_draw_options_default();
     o.alpha_mode = (PIXELICA_AlphaMode)-1;
     EXPECT_REJECT();
-    o.alpha_mode = (PIXELICA_AlphaMode)3;
+    o.alpha_mode = (PIXELICA_AlphaMode)4; /* one past PIXELICA_ALPHA_ADD */
     EXPECT_REJECT();
 
     o = pixelica_draw_options_default();

@@ -1,6 +1,6 @@
 /*
  * Pixelica - OPTIONAL skeleton module: bone hierarchy posing and
- * positions-only linear blend skinning on the CPU.
+ * linear blend skinning of positions and (optionally) normals on the CPU.
  *
  * Built only with PIXELICA_BUILD_SKELETON=ON (target Pixelica::skeleton). The core
  * library and pixelica/pixelica.h never include this header.
@@ -117,8 +117,8 @@ PIXELICA_Status pixelica_skeleton_pose(const PIXELICA_Skeleton *skeleton,
                             float (*scratch)[16], size_t scratch_matrices);
 
 /*
- * Positions-only linear blend skinning (no normals; intended for the unlit
- * renderer path). For vertex v with normalized weights n_k = w_k / sum(w):
+ * Positions-only linear blend skinning. For vertex v with normalized
+ * weights n_k = w_k / sum(w):
  *   out_positions[v] = sum over w_k > 0 of n_k * (palette[bone_k] * bind_v)
  * evaluated in double and range-checked before the single float rounding.
  *
@@ -147,6 +147,69 @@ PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
                             const PIXELICA_SkinWeight *weights, size_t vertex_count,
                             const float (*palette)[16], uint32_t bone_count,
                             PIXELICA_Vec3 *out_positions,
+                            PIXELICA_Vec3 *scratch, size_t scratch_vertices);
+
+/*
+ * Normal palette for pixelica_skeleton_skin_normals: out[j] is the matrix
+ * whose upper-left 3x3 is the INVERSE TRANSPOSE of palette[j]'s
+ * (pixelica_mat4_normal_matrix in math.h), with an identity translation and
+ * bottom row. That is the transform a DIRECTION must use so it stays
+ * perpendicular to the surface when the bone carries a non-uniform scale or
+ * a shear.
+ *
+ * It is NOT required: when every bone is a rotation, a translation and at
+ * most a UNIFORM scale, palette[j]'s own 3x3 already preserves angles, so
+ * the ordinary palette can be passed straight to skin_normals and this call
+ * skipped (the results then differ only by a positive per-bone factor,
+ * which the final normalization removes).
+ *
+ * Extents (caller responsibility): palette and out each hold bone_count
+ * matrices; scratch holds scratch_matrices matrices and must have
+ * scratch_matrices >= bone_count (else PIXELICA_ERR_NO_MEMORY); its contents
+ * are unspecified after any call.
+ *
+ * Requires: all pointers non-NULL; 1 <= bone_count <=
+ * PIXELICA_SKELETON_MAX_BONES; every palette matrix affine AND with a
+ * non-singular 3x3 block (a zero scale on an axis has no normal matrix and
+ * is PIXELICA_ERR_INVALID_ARG). Aliasing: out and the used scratch range
+ * must not overlap each other or palette. Everything is computed into
+ * scratch first, so `out` is byte-for-byte unchanged on every failure.
+ */
+PIXELICA_Status pixelica_skeleton_normal_palette(const float (*palette)[16],
+                                      uint32_t bone_count,
+                                      float (*out_normal_palette)[16],
+                                      float (*scratch)[16],
+                                      size_t scratch_matrices);
+
+/*
+ * Linear blend skinning of NORMALS, the direction counterpart of
+ * pixelica_skeleton_skin. For vertex v with normalized weights
+ * n_k = w_k / sum(w) and the 3x3 ROTATION part R_k of normal_palette[bone_k]
+ * (the translation column is ignored, as it must be for a direction):
+ *   raw      = sum over w_k > 0 of n_k * (R_k * bind_normals[v])
+ *   out[v]   = raw / |raw|
+ * evaluated in double, with one float rounding per stored component. The
+ * output is therefore UNIT length (up to that rounding) and ready for
+ * PIXELICA_Lighting.normals.
+ *
+ * `normal_palette` is either pixelica_skeleton_normal_palette's output or,
+ * for rigid / uniformly scaled bones, the ordinary pose palette.
+ *
+ * Extents, requirements and aliasing are exactly those of
+ * pixelica_skeleton_skin, with bind_normals/out_normals in place of the
+ * positions, plus:
+ *   - every bind normal must be finite AND non-zero;
+ *   - the blended raw vector must be finite and non-zero. Influences that
+ *     cancel exactly (opposite normals at equal weight) leave no direction
+ *     to normalize and are PIXELICA_ERR_INVALID_ARG.
+ * out_normals may be EXACTLY bind_normals (in-place), but any partial
+ * overlap is rejected; it is written only after every vertex succeeded and
+ * is byte-for-byte unchanged on every failure.
+ */
+PIXELICA_Status pixelica_skeleton_skin_normals(const PIXELICA_Vec3 *bind_normals,
+                            const PIXELICA_SkinWeight *weights, size_t vertex_count,
+                            const float (*normal_palette)[16], uint32_t bone_count,
+                            PIXELICA_Vec3 *out_normals,
                             PIXELICA_Vec3 *scratch, size_t scratch_vertices);
 
 #ifdef __cplusplus

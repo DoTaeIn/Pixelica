@@ -66,6 +66,22 @@ typedef struct PIXELICA_DrawClip {
     uint32_t count;     /* 0..PIXELICA_MAX_WORLD_CLIP_PLANES */
 } PIXELICA_DrawClip;
 
+/*
+ * Prepared lighting state of one draw (renderer.h, PIXELICA_Lighting). The
+ * normal matrix and the normalized light directions are computed once per
+ * draw; the per-vertex factor itself is recomputed per triangle, exactly
+ * like the world clip distances, so the frame arena stays position-only.
+ */
+typedef struct PIXELICA_DrawLight {
+    float normal_matrix[16];      /* inverse transpose of model's 3x3 */
+    const PIXELICA_Vec3 *normals; /* vertex_count object-space normals */
+    double dir[PIXELICA_MAX_DIRECTIONAL_LIGHTS][3];   /* unit, toward light */
+    double color[PIXELICA_MAX_DIRECTIONAL_LIGHTS][3]; /* 0..255 per channel */
+    double ambient[3];            /* 0..255 per channel */
+    uint32_t count;               /* 0..PIXELICA_MAX_DIRECTIONAL_LIGHTS */
+    int two_sided;
+} PIXELICA_DrawLight;
+
 /* Per-vertex sources of the extra attributes of a layered draw. */
 typedef struct PIXELICA_DrawAttrs {
     const PIXELICA_Vec2 *layer_uvs[PIXELICA_MAX_TEXTURE_LAYERS];
@@ -132,6 +148,54 @@ static int pixelica_world_distances(const PIXELICA_DrawClip *dc, PIXELICA_Vec3 v
         out[k] = (float)d;
     }
     return 1;
+}
+
+/*
+ * Lambert factor of one vertex, 0..255 per channel (renderer.h). The object
+ * normal is taken into world space with the inverse-transpose matrix and
+ * normalized; a normal that the (finite, non-singular) matrix maps to zero
+ * or out of range contributes no diffuse term, leaving ambient only.
+ */
+static void pixelica_light_vertex(const PIXELICA_DrawLight *dl, PIXELICA_Vec3 n,
+                                  double out[3])
+{
+    const float *m = dl->normal_matrix;
+    double v[3];
+    double len2;
+    int c;
+
+    for (c = 0; c < 3; ++c) {
+        out[c] = dl->ambient[c];
+        v[c] = (double)m[0 + c] * (double)n.x + (double)m[4 + c] * (double)n.y +
+               (double)m[8 + c] * (double)n.z;
+    }
+    len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    if (len2 > 0.0 && len2 <= DBL_MAX) {
+        const double inv = 1.0 / sqrt(len2);
+        uint32_t k;
+
+        for (k = 0; k < dl->count; ++k) {
+            double d = (v[0] * dl->dir[k][0] + v[1] * dl->dir[k][1] +
+                        v[2] * dl->dir[k][2]) * inv;
+
+            if (dl->two_sided) {
+                d = fabs(d);
+            }
+            if (d > 1.0) { /* rounding of a unit dot product */
+                d = 1.0;
+            }
+            if (d > 0.0) {
+                for (c = 0; c < 3; ++c) {
+                    out[c] += floor(dl->color[k][c] * d + 0.5);
+                }
+            }
+        }
+    }
+    for (c = 0; c < 3; ++c) {
+        if (out[c] > 255.0) {
+            out[c] = 255.0;
+        }
+    }
 }
 
 static uint32_t pixelica_outcode(const PIXELICA_ClipVertex *v)
@@ -313,7 +377,8 @@ static void pixelica_draw_triangle(PIXELICA_Context *ctx, const PIXELICA_RasterT
                               const PIXELICA_RasterShade *shade,
                               const PIXELICA_DrawAttrs *attrs,
                               const PIXELICA_Vec3 *vertices,
-                              const PIXELICA_DrawClip *wclip)
+                              const PIXELICA_DrawClip *wclip,
+                              const PIXELICA_DrawLight *light)
 {
     const uint32_t active = attrs != NULL ? attrs->active : 0u;
     const uint32_t nuser = wclip != NULL ? wclip->count : 0u;
@@ -416,6 +481,22 @@ static void pixelica_draw_triangle(PIXELICA_Context *ctx, const PIXELICA_RasterT
                 poly[i].x_attr[PIXELICA_RASTER_COLOR_ATTR + 1u] = (float)vc->g;
                 poly[i].x_attr[PIXELICA_RASTER_COLOR_ATTR + 2u] = (float)vc->b;
                 poly[i].x_attr[PIXELICA_RASTER_COLOR_ATTR + 3u] = (float)vc->a;
+            } else if (light != NULL) {
+                poly[i].x_attr[PIXELICA_RASTER_COLOR_ATTR + 3u] = 255.0f;
+            }
+        }
+        if (light != NULL) {
+            /* One modulation factor per channel: vertex color (if any)
+             * times the Lambert factor, both in 0..255. */
+            const int modulated = attrs != NULL && attrs->vertex_colors != NULL;
+            double f[3];
+            uint32_t ch;
+
+            pixelica_light_vertex(light, light->normals[idx[i]], f);
+            for (ch = 0; ch < 3u; ++ch) {
+                float *slot = &poly[i].x_attr[PIXELICA_RASTER_COLOR_ATTR + ch];
+                *slot = modulated ? (float)((double)*slot * f[ch] / 255.0)
+                                  : (float)f[ch];
             }
         }
     }
@@ -568,7 +649,8 @@ static PIXELICA_Status pixelica_check_options(const PIXELICA_Context *ctx,
         (o->wrap_v != PIXELICA_WRAP_CLAMP && o->wrap_v != PIXELICA_WRAP_REPEAT) ||
         (o->alpha_mode != PIXELICA_ALPHA_OPAQUE &&
          o->alpha_mode != PIXELICA_ALPHA_TEST &&
-         o->alpha_mode != PIXELICA_ALPHA_BLEND)) {
+         o->alpha_mode != PIXELICA_ALPHA_BLEND &&
+         o->alpha_mode != PIXELICA_ALPHA_ADD)) {
         return PIXELICA_ERR_INVALID_ARG;
     }
     if (o->texture_alpha == NULL) {
@@ -705,18 +787,108 @@ static PIXELICA_Status pixelica_check_effects(const PIXELICA_Context *ctx,
     return PIXELICA_OK;
 }
 
+/*
+ * O(lights) lighting checks (model already known finite). On success `out`
+ * holds the normal matrix, the normalized light directions and the colors;
+ * `out->normals` is set by the caller after the O(n) normal check.
+ */
+static PIXELICA_Status pixelica_check_lighting(const PIXELICA_Context *ctx,
+                                          const PIXELICA_Mesh *mesh,
+                                          const float model[16],
+                                          const PIXELICA_Lighting *lt,
+                                          PIXELICA_DrawLight *out)
+{
+    size_t k;
+
+    memset(out, 0, sizeof *out);
+    if (lt == NULL) {
+        return PIXELICA_OK;
+    }
+    if (pixelica_overlaps_context(ctx, lt, sizeof *lt) ||
+        (mesh->vertex_count > 0 && lt->normals == NULL) ||
+        pixelica_array_overlaps_context(ctx, lt->normals, mesh->vertex_count,
+                                        sizeof *lt->normals) ||
+        lt->light_count > PIXELICA_MAX_DIRECTIONAL_LIGHTS ||
+        (lt->light_count > 0 && lt->lights == NULL) ||
+        pixelica_array_overlaps_context(ctx, lt->lights, lt->light_count,
+                                        sizeof *lt->lights)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    /* Normals are only meaningful with a non-singular 3x3 model block. */
+    if (pixelica_mat4_normal_matrix(out->normal_matrix, model) != PIXELICA_OK) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    for (k = 0; k < lt->light_count; ++k) {
+        const PIXELICA_DirectionalLight *l = &lt->lights[k];
+        double d[3];
+        double len2;
+        double inv;
+        int c;
+
+        if (!pixelica_isfinite_f(l->direction.x) ||
+            !pixelica_isfinite_f(l->direction.y) ||
+            !pixelica_isfinite_f(l->direction.z)) {
+            return PIXELICA_ERR_INVALID_ARG;
+        }
+        d[0] = (double)l->direction.x;
+        d[1] = (double)l->direction.y;
+        d[2] = (double)l->direction.z;
+        len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        if (!(len2 > 0.0) || !(len2 <= DBL_MAX)) {
+            return PIXELICA_ERR_INVALID_ARG;
+        }
+        /* Stored pointing TOWARD the light, so dot(N, dir) is the Lambert
+         * term directly. */
+        inv = -1.0 / sqrt(len2);
+        for (c = 0; c < 3; ++c) {
+            out->dir[k][c] = d[c] * inv;
+        }
+        out->color[k][0] = (double)l->r;
+        out->color[k][1] = (double)l->g;
+        out->color[k][2] = (double)l->b;
+    }
+    out->count = (uint32_t)lt->light_count;
+    out->ambient[0] = (double)lt->ambient_r;
+    out->ambient[1] = (double)lt->ambient_g;
+    out->ambient[2] = (double)lt->ambient_b;
+    out->two_sided = lt->two_sided ? 1 : 0;
+    return PIXELICA_OK;
+}
+
+/* O(n) lighting check: every normal finite and non-zero. */
+static PIXELICA_Status pixelica_check_normals(const PIXELICA_Mesh *mesh,
+                                              const PIXELICA_Lighting *lt)
+{
+    uint32_t i;
+
+    for (i = 0; i < mesh->vertex_count; ++i) {
+        const PIXELICA_Vec3 n = lt->normals[i];
+
+        if (!pixelica_isfinite_f(n.x) || !pixelica_isfinite_f(n.y) ||
+            !pixelica_isfinite_f(n.z) ||
+            (n.x == 0.0f && n.y == 0.0f && n.z == 0.0f)) {
+            return PIXELICA_ERR_INVALID_ARG;
+        }
+    }
+    return PIXELICA_OK;
+}
+
 /* Shared implementation of every pixelica_draw_mesh* entry point. `ml` is
  * NULL for the legacy APIs; otherwise `material` is &ml->base. `fx` is
- * NULL except for pixelica_draw_mesh_effects. */
+ * NULL except for pixelica_draw_mesh_effects and pixelica_draw_mesh_lit,
+ * and `lt` is NULL except for pixelica_draw_mesh_lit with lighting. */
 static PIXELICA_Status pixelica_draw_impl(PIXELICA_Context *ctx,
                                      const PIXELICA_Mesh *mesh,
                                      const float model[16],
                                      const PIXELICA_Material *material,
                                      const PIXELICA_DrawOptions *options,
                                      const PIXELICA_MaterialLayers *ml,
-                                     const PIXELICA_MeshEffects *fx)
+                                     const PIXELICA_MeshEffects *fx,
+                                     const PIXELICA_Lighting *lt)
 {
-    const int strict = ml != NULL || fx != NULL; /* context-alias checks */
+    /* context-alias checks */
+    const int strict = ml != NULL || fx != NULL || lt != NULL;
+    PIXELICA_DrawLight light;
     PIXELICA_DrawClip wclip;
     PIXELICA_WorldClipPlane planes_copy[PIXELICA_MAX_WORLD_CLIP_PLANES];
     float model_copy[16];
@@ -766,6 +938,9 @@ static PIXELICA_Status pixelica_draw_impl(PIXELICA_Context *ctx,
     if (st == PIXELICA_OK) {
         st = pixelica_check_effects(ctx, model, fx);
     }
+    if (st == PIXELICA_OK) {
+        st = pixelica_check_lighting(ctx, mesh, model, lt, &light);
+    }
     if (st != PIXELICA_OK) {
         return pixelica_fail(ctx, st);
     }
@@ -778,9 +953,13 @@ static PIXELICA_Status pixelica_draw_impl(PIXELICA_Context *ctx,
     if (st == PIXELICA_OK && ml != NULL) {
         st = pixelica_check_layer_data(mesh, ml);
     }
+    if (st == PIXELICA_OK && lt != NULL) {
+        st = pixelica_check_normals(mesh, lt);
+    }
     if (st != PIXELICA_OK) {
         return pixelica_fail(ctx, st);
     }
+    light.normals = lt != NULL ? lt->normals : NULL;
 
     /* Transform every vertex into the arena before touching any pixel so a
      * rejected draw leaves the frame unchanged. */
@@ -884,6 +1063,11 @@ static PIXELICA_Status pixelica_draw_impl(PIXELICA_Context *ctx,
         shade.layer_count = attrs.layer_count;
         shade.vertex_colors = attrs.vertex_colors != NULL;
     }
+    if (lt != NULL) {
+        /* Lighting rides the vertex-color modulation slots. */
+        attrs.active = PIXELICA_RASTER_EXTRA_ATTRS;
+        shade.vertex_colors = 1;
+    }
     if (fx != NULL) {
         shade.bilinear = fx->filter == PIXELICA_FILTER_BILINEAR;
         shade.pixel = fx->pixel;
@@ -902,7 +1086,8 @@ static PIXELICA_Status pixelica_draw_impl(PIXELICA_Context *ctx,
         pixelica_draw_triangle(ctx, &target, clip, mesh->indices[i],
                           mesh->indices[i + 1], mesh->indices[i + 2], uvs,
                           &shade, attrs.active != 0u ? &attrs : NULL,
-                          mesh->vertices, wclip.count != 0u ? &wclip : NULL);
+                          mesh->vertices, wclip.count != 0u ? &wclip : NULL,
+                          lt != NULL ? &light : NULL);
     }
     ctx->pixel_callback_active = 0;
     return PIXELICA_OK;
@@ -911,14 +1096,14 @@ static PIXELICA_Status pixelica_draw_impl(PIXELICA_Context *ctx,
 PIXELICA_Status pixelica_draw_mesh(PIXELICA_Context *ctx, const PIXELICA_Mesh *mesh,
                          const float model[16])
 {
-    return pixelica_draw_impl(ctx, mesh, model, NULL, NULL, NULL, NULL);
+    return pixelica_draw_impl(ctx, mesh, model, NULL, NULL, NULL, NULL, NULL);
 }
 
 PIXELICA_Status pixelica_draw_mesh_ex(PIXELICA_Context *ctx, const PIXELICA_Mesh *mesh,
                             const float model[16],
                             const PIXELICA_Material *material)
 {
-    return pixelica_draw_impl(ctx, mesh, model, material, NULL, NULL, NULL);
+    return pixelica_draw_impl(ctx, mesh, model, material, NULL, NULL, NULL, NULL);
 }
 
 PIXELICA_Status pixelica_draw_mesh_options(PIXELICA_Context *ctx,
@@ -927,7 +1112,8 @@ PIXELICA_Status pixelica_draw_mesh_options(PIXELICA_Context *ctx,
                                  const PIXELICA_Material *material,
                                  const PIXELICA_DrawOptions *options)
 {
-    return pixelica_draw_impl(ctx, mesh, model, material, options, NULL, NULL);
+    return pixelica_draw_impl(ctx, mesh, model, material, options, NULL, NULL,
+                              NULL);
 }
 
 PIXELICA_Status pixelica_draw_mesh_layers(PIXELICA_Context *ctx,
@@ -938,7 +1124,7 @@ PIXELICA_Status pixelica_draw_mesh_layers(PIXELICA_Context *ctx,
 {
     return pixelica_draw_impl(ctx, mesh, model,
                               material != NULL ? &material->base : NULL,
-                              options, material, NULL);
+                              options, material, NULL, NULL);
 }
 
 PIXELICA_Status pixelica_draw_mesh_effects(PIXELICA_Context *ctx,
@@ -950,5 +1136,18 @@ PIXELICA_Status pixelica_draw_mesh_effects(PIXELICA_Context *ctx,
 {
     return pixelica_draw_impl(ctx, mesh, model,
                               material != NULL ? &material->base : NULL,
-                              options, material, effects);
+                              options, material, effects, NULL);
+}
+
+PIXELICA_Status pixelica_draw_mesh_lit(PIXELICA_Context *ctx,
+                             const PIXELICA_Mesh *mesh,
+                             const float model[16],
+                             const PIXELICA_MaterialLayers *material,
+                             const PIXELICA_DrawOptions *options,
+                             const PIXELICA_MeshEffects *effects,
+                             const PIXELICA_Lighting *lighting)
+{
+    return pixelica_draw_impl(ctx, mesh, model,
+                              material != NULL ? &material->base : NULL,
+                              options, material, effects, lighting);
 }

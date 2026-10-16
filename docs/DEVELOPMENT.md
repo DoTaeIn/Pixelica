@@ -1,8 +1,10 @@
 # Pixelica 개발 문서
 
-> **구현 기준일 2026-10-09** · 라이브러리 버전 0.1.0 (`project(Pixelica VERSION 0.1.0 LANGUAGES C)`) · 언어 C11 ·
-> 이 문서는 기준일의 작업 트리에 있는 소스를 읽고 정리한 개발자 핸드북입니다. 아직 첫 커밋, 푸시, GitHub Actions 실행은 없고,
-> 라이선스는 정해지지 않았습니다. 실제 ESP32-P4/Raspberry Pi 보드는 사용한 적이 없습니다.
+> **문서 갱신일 2026-10-16** · 라이브러리 버전 0.1.0 · C11.
+> 현재 개발 구조·빌드·선택 모듈·검증 범위는 [42장](#42-현재-개발-기준과-최근-확장-2026-10-16)을 먼저 읽습니다.
+> 1–26장은 2026-10-09의 구현 기준선이며 이후 변경은 확장 장과 개별 API 가이드가 우선합니다.
+> 과거 플랫폼별 테스트·성능 수치는 해당 날짜와 구성의 기록입니다. 현재 전체 지원을 뜻하지 않습니다.
+> ESP32-P4/Raspberry Pi 실물 보드 검증은 하지 않았습니다.
 
 > **2026-10-10 추가 (2D / 2.5D 분리).** 1–26장은 위 기준일의 **3D 전용 트리**를 설명하며, 그 서술(타깃 표, 소스 목록, SDK 구성)은 이력으로 남겨 두었습니다.
 > 2D 렌더러, 2.5D 하이브리드, 2D/3D SDK 분리, 새 데모는 [27장](#27-2d--25d-확장-2026-10-10)이 현재 구조를 설명하고 해당 부분에서는 그쪽이 우선합니다.
@@ -12,6 +14,43 @@
 > `Pixelica::input_manager`(키보드·컨트롤러·사용자 정의 하드웨어 → 액션, 2D·3D 공통)와 빌드 전용 SDL3 어댑터는 [28장](#28-입력-매니저-2026-10-10)과
 > [`input_manager.md`](input_manager.md)가 설명하고 검증 기록은 `INPUT_MANAGER_AUDIT.md` (local-only record)입니다. 기본 PAL과 예제의 키 경로는 바뀌지 않았고,
 > 이미 만든 2D/3D SDK 압축 파일은 다시 빌드하지 않아 이 모듈을 포함하지 않습니다.
+
+> **2026-10-13 추가 (수명주기와 저장소).** 1–26장의 소스 목록과 "`pixelica_common` 5개 소스" 서술은 기준일 기록입니다.
+> `Pixelica::common`에 이식 가능한 **게임 수명주기**(`pixelica/app.h`, `src/game/app.c`)와 **저장소 추상화**
+> (`pixelica/storage.h`, `src/game/storage.c` + PC 어댑터 `src/game/storage_fs.c`)가 추가되었습니다. 기본 포함이며 옵션이 없습니다.
+> 계약은 [`lifecycle.md`](lifecycle.md)와 [`storage.md`](storage.md)에, 실행 예제는 `examples/hello_lifecycle/`에 있습니다.
+> 저장 봉투·CRC는 [`save.md`](save.md)의 것을 그대로 재사용하고, 원자적 파일 쓰기 코드는 비공개 헤더
+> `src/game/save_internal.h`를 통해 `save.c`와 공유합니다. 검증: 단위 테스트 `test_app`·`test_storage`와
+> **별도 프로세스**로 체크포인트 복원을 확인하는 통합 테스트 `lifecycle_checkpoint_restart`
+> (`cmake/PixelicaLifecycleCheck.cmake`). 실물 보드에서는 여전히 실행하지 않았습니다.
+
+> **2026-10-14 추가 (조명·가산 블렌딩·애니메이션 클립).** 1–26장의 "렌더러는 **unlit만** 지원"(1.2절)과
+> "범위 밖: 런타임 조명"(1.4절)은 기준일 기록입니다. 세 기능이 **전부 opt-in**으로 추가되었고 기존 API의
+> 출력은 비트 단위로 그대로입니다.
+> ① `pixelica_draw_mesh_lit()` + `PIXELICA_Lighting`: ambient + 최대 4개 방향광 Lambert, 정점 단위
+> 평가, **역전치 노멀 행렬**(`pixelica_mat4_normal_matrix`)로 비균등 스케일에서도 법선이 수직 유지
+> ([`lighting.md`](lighting.md)).
+> ② `PIXELICA_ALPHA_ADD`: 3D·2D 공통 프레임버퍼 가산 블렌딩, RGB565 채널 포화, 깊이 테스트는 하되
+> 쓰지 않음. 머티리얼의 `PIXELICA_TEXTURE_ADD`와 다른 단계입니다 ([`blending.md`](blending.md)).
+> ③ `pixelica/anim_clip.h` (`Pixelica::common`): 본별 TRS 트랙 클립, 쿼터니언(`PIXELICA_Quat`,
+> `src/math/quat.c`), once/loop 재생, 크로스페이드, 스윕 `(이전, 현재]` 이벤트
+> ([`anim_clips.md`](anim_clips.md)). 선택 스켈레톤 모듈에는 법선 스키닝
+> (`pixelica_skeleton_skin_normals`, `pixelica_skeleton_normal_palette`)이 붙었습니다
+> ([`rigging.md`](rigging.md) 3.6절).
+> 새 소스: `src/math/quat.c`, `src/animation/anim_clip.c`(+비공개 `anim_internal.h`), 새 공개 헤더
+> `include/pixelica/anim_clip.h`. 실행 예제는 `examples/hello_lighting/`이고 세 기능을 한 프로그램에서
+> 보여 줍니다. 검증: 단위 테스트 `test_lighting`, `test_blend_add`, `test_blend_add2d`, `test_anim_clip`,
+> 확장된 `test_math`·`test_skeleton`, 그리고 헤드리스 스모크 `smoke_hello_lighting_long`(이벤트·루프·
+> 크로스페이드 횟수를 출력으로 고정). 실물 보드에서는 여전히 실행하지 않았습니다.
+
+> **2026-10-14 추가 (픽셀 조명 도구).** 위 조명 항목과 별개로, 재사용 가능한 **광 패치·접지 그림자·선택적 블룸**이
+> `Pixelica::common`의 새 헤더 `pixelica/light.h`(`src/light/light_mask.c`, `src/light/bloom.c`)와 3D 코어의
+> `pixelica_draw_light` · `pixelica_draw_contact_shadow` · 이미시브 마스크 훅(`src/renderer/light_draw.c`)으로
+> 추가되었습니다. 전부 opt-in이고 기존 드로우 경로는 비트 단위로 그대로입니다. 패치는 기존
+> `pixelica_draw_mesh_effects` 경로로 쿼드 하나를 그릴 뿐이라 **깊이 테스트는 받고 깊이는 쓰지 않으며**,
+> 블룸은 호출자 소유 RGB565 표면에 **더하기만** 합니다(가시성 계산 없음). 계약·한계·측정값은
+> [`pixel_light.md`](pixel_light.md), 실행 예제는 `examples/hello_pixel_light/`(Pixel Room 장면 재사용, 수정 없음),
+> 검증은 `test_light_mask`·`test_bloom`·`test_light_draw`와 스모크 `smoke_hello_pixel_light`입니다.
 
 ## 이 문서를 읽는 법
 
@@ -65,6 +104,16 @@
 30. [오디오 (2026-10-10)](#30-오디오-2026-10-10)
 31. [선택 파티클 모듈 (2026-10-10)](#31-선택-파티클-모듈-2026-10-10)
 32. [선택 CPU 쉐이더 (2026-10-10)](#32-선택-cpu-쉐이더-2026-10-10)
+33. [기본 UI 라이브러리 (2026-10-10)](#33-기본-ui-라이브러리-2026-10-10)
+34. [저장·게임 화면·다국어](#34-저장게임-화면다국어)
+35. [텍스처 반복·알파 테스트·블렌딩](#35-텍스처-반복알파-테스트블렌딩)
+36. [카메라 보조·디버그](#36-카메라-보조디버그)
+37. [공통 청크 관리](#37-공통-청크-관리)
+38. [텍스처·정점 RGBA·다중 UV 합성](#38-텍스처정점-rgba다중-uv-합성)
+39. [렌더 타깃·장면 스냅샷·픽셀 처리·Bilinear·월드 클립](#39-렌더-타깃장면-스냅샷픽셀-처리bilinear월드-클립)
+40. [2D 데스크톱 에디터](#40-2d-데스크톱-에디터)
+41. [2D 충돌·중력·점프와 에디터 연결](#41-2d-충돌중력점프와-에디터-연결)
+42. [현재 개발 기준과 최근 확장 (2026-10-16)](#42-현재-개발-기준과-최근-확장-2026-10-16)
 
 ---
 
@@ -373,11 +422,12 @@ flowchart TB
 |---|---|---|---|
 | core | [`context.c`](../src/core/context.c), [`context_internal.h`](../src/core/context_internal.h) | 컨텍스트 생성/파괴, 메모리 레이아웃·가드, 프레임 프로토콜, 고정 타임스텝 | [`pixelica.h`](../include/pixelica/pixelica.h) |
 | renderer | [`pipeline.c`](../src/renderer/pipeline.c), [`rasterizer.c`](../src/renderer/rasterizer.c), [`raster.h`](../src/renderer/raster.h), [`draw_internal.h`](../src/renderer/draw_internal.h) | 검증, 변환, reject/cull, 클리핑, 투영, 삼각형 채우기, 깊이, 텍스처 샘플 | [`renderer.h`](../include/pixelica/renderer.h) |
-| math | [`mat4.c`](../src/math/mat4.c) | 열 우선 4x4 행렬 | [`math.h`](../include/pixelica/math.h) |
+| math | [`mat4.c`](../src/math/mat4.c), [`quat.c`](../src/math/quat.c) | 열 우선 4x4 행렬, 역전치 노멀 행렬, 회전 쿼터니언(slerp 포함) | [`math.h`](../include/pixelica/math.h) |
 | input | [`input.c`](../src/input/input.c) | RLE 기록, 재생, `P3IN` 직렬화 | [`input.h`](../include/pixelica/input.h) |
 | assets | [`container.c/.h`](../src/assets/container.c), [`mesh_asset.c`](../src/assets/mesh_asset.c), [`texture_asset.c`](../src/assets/texture_asset.c), [`cart.c`](../src/assets/cart.c) | v1 컨테이너 파싱, CRC-32, 메시/텍스처/카트 로더 | [`assets.h`](../include/pixelica/assets.h) |
 | scene | [`scene.c`](../src/scene/scene.c), [`aabb.c`](../src/scene/aabb.c) | 고정 용량 씬 목록, 스윕 AABB 이동 | [`scene.h`](../include/pixelica/scene.h) |
 | animation | [`animation.c`](../src/animation/animation.c) | 이징, 스칼라 tween, 키프레임 샘플링, 재생 플레이어, 피벗 변환 행렬 ([`animation.md`](animation.md), 12.4절) | [`animation.h`](../include/pixelica/animation.h) |
+| animation (클립) | [`anim_clip.c`](../src/animation/anim_clip.c) | 본별 TRS 트랙 클립, 재생 커서, 크로스페이드, 스윕 이벤트 ([`anim_clips.md`](anim_clips.md)). `animation.c`와 비공개 헤더 `anim_internal.h`로 이징·보간을 공유 | [`anim_clip.h`](../include/pixelica/anim_clip.h) |
 | *(선택)* skeleton | [`modules/skeleton/skeleton.c`](../modules/skeleton/skeleton.c) | `PIXELICA_BUILD_SKELETON=ON`일 때만. 계층 포즈·팔레트·위치 전용 선형 블렌드 스키닝 ([`rigging.md`](rigging.md) 3절) | [`skeleton.h`](../modules/skeleton/include/pixelica/skeleton.h) |
 | *(선택)* ik | [`modules/ik/ik.c`](../modules/ik/ik.c) | `PIXELICA_BUILD_IK=ON`일 때만. 해석적 두 본 IK ([`rigging.md`](rigging.md) 4절) | [`ik.h`](../modules/ik/include/pixelica/ik.h) |
 | (PAL 계약) | — | 구현은 플랫폼 쪽 | [`platform.h`](../include/pixelica/platform.h), [`status.h`](../include/pixelica/status.h) |
@@ -649,7 +699,10 @@ flowchart LR
 ### 9.4 하지 않는 것
 
 텍스처 반복·알파 테스트·블렌딩은 [texture_options.md](texture_options.md)의 선택적 그리기 옵션으로 제공합니다.
-조명, 텍스처 필터링, 밉맵, 안티앨리어싱, 자동 투명 정렬, 오브젝트 단위 프러스텀 컬링, 가드밴드, 비정사각 스케일 보정 등은 없습니다.
+가산 블렌딩(`PIXELICA_ALPHA_ADD`)은 [blending.md](blending.md)에, 정점 단위 ambient + 방향광 Lambert 조명
+(`pixelica_draw_mesh_lit`, 2026-10-14 추가)은 [lighting.md](lighting.md)에 있습니다. 둘 다 opt-in이고 기본
+경로는 여전히 unlit·OPAQUE입니다.
+픽셀 단위 조명·스페큘러·그림자, 텍스처 필터링, 밉맵, 안티앨리어싱, 자동 투명 정렬, 오브젝트 단위 프러스텀 컬링, 가드밴드, 비정사각 스케일 보정 등은 없습니다.
 화면 밖 삼각형은 outcode로 싸게 버리지만 메시 전체를 미리 거르지는 않습니다 (정점은 항상 전부 변환).
 작은 방 장면의 조명은 `pixel_room_world.c`가 면 색에 미리 곱해 둔 값입니다.
 
@@ -2023,7 +2076,7 @@ JSON의 상태·프레임 카운터와 `--ppm` 출력은 **마지막 측정 프�
 
 | 항목 | 3D 전용 (1–26장) | 현재 (27장) |
 |---|---|---|
-| 소스 | `src/**/*.c` 전부가 `pixelica_core` | 공용 5개(`math/mat4.c`, `input/input.c`, `animation/animation.c`, `assets/container.c`, `assets/texture_asset.c`) = `pixelica_common`, 나머지 7개 = `pixelica_core`(공용을 PUBLIC 링크) |
+| 소스 | `src/**/*.c` 전부가 `pixelica_core` | 27장 시점의 공용 5개(`math/mat4.c`, `input/input.c`, `animation/animation.c`, `assets/container.c`, `assets/texture_asset.c`) = `pixelica_common`, 나머지 7개 = `pixelica_core`(공용을 PUBLIC 링크). 이후 공용 쪽에 `src/game/*`, `math/quat.c`, `animation/anim_clip.c`가 더해졌습니다. **현재 목록의 기준은 언제나 `cmake/PixelicaSources.cmake`** 이며, 그 파일이 트리와 어긋나면 configure가 실패합니다 |
 | 타깃 | `Pixelica::core` | 그대로 + `Pixelica::renderer3d`(별칭), `Pixelica::common`, `Pixelica::renderer2d` = `Pixelica2D::core`, `Pixelica::hybrid` |
 | 공유 헤더 | `renderer.h`, `assets.h`가 모두 정의 | `image.h`(`PIXELICA_Texture`, `PIXELICA_RGB565`, 최대 텍스처 크기), `assets_common.h`(에셋 상수·CRC·텍스처 에셋)가 공유. `renderer.h`/`assets.h`는 이를 포함하므로 옛 심볼은 그대로 보임. `PIXELICA_Vec2`는 `math.h`로 이동 |
 | 옵션 | — | `PIXELICA_BUILD_3D`(기본 ON), `PIXELICA_BUILD_2D`(최상위 ON, 하위 프로젝트 OFF). hybrid는 둘 다 켜졌을 때만 |
@@ -2469,3 +2522,132 @@ Windows/Linux 에디터 브리지 CTest도 각각 1/1 통과했습니다.
 사용법·제한은 [collision2d.md](collision2d.md)에 있습니다.
 이동 물체끼리의 반응·경사면·강체 물리·움직이는 발판은 포함하지 않았습니다.
 Linux GUI·실보드 검증과 릴리즈 ZIP 갱신은 하지 않았습니다.
+
+
+## 42. 현재 개발 기준과 최근 확장 (2026-10-16)
+
+이 장은 현재 작업 트리의 개발 진입점입니다. 정확한 API 계약은 공개 헤더와 아래 가이드를,
+소스 분류는 `cmake/PixelicaSources.cmake`를 확인합니다. 이전 장의 소스 개수·기능 제한을
+현재 코드에 그대로 적용하지 않습니다.
+
+### 42.1 기본 기능과 선택 모듈
+
+| 기능 | 포함 위치·선택 방법 | 계약·예제 |
+|---|---|---|
+| 게임 수명주기·체크포인트 | `Pixelica::common`, 기본 포함 | [lifecycle.md](lifecycle.md), `hello_lifecycle` |
+| 게임 ID별 저장 슬롯·PC 저장 어댑터 | `Pixelica::common`, 기본 포함 | [storage.md](storage.md), [save.md](save.md) |
+| 쿼터니언·본별 TRS 클립·전환·이벤트 | `Pixelica::common`, 기본 포함 | [anim_clips.md](anim_clips.md) |
+| 정점 단위 노멀 조명 | 3D 코어의 `pixelica_draw_mesh_lit()`, 호출 시 적용 | [lighting.md](lighting.md), `hello_lighting` |
+| 화면 가산 블렌딩 | 기존 2D·3D 그리기의 `PIXELICA_ALPHA_ADD` | [blending.md](blending.md) |
+| 노멀 스키닝 | `PIXELICA_BUILD_SKELETON=ON` | [rigging.md](rigging.md) |
+| 빛 패치·접촉 그림자·선택적 블룸 | 공용 `light.h`와 3D 래퍼, 호출 시 적용 | [pixel_light.md](pixel_light.md), `hello_pixel_light` |
+| 수면·부력 | `PIXELICA_BUILD_WATER=ON`, 기본 OFF; `Pixelica::water` | [water.md](water.md), `hello_water` |
+| 수면 메시·그리기 | 물 옵션과 3D 코어가 있을 때 `Pixelica::water3d` | [water3d.h](../modules/water/include/pixelica/water3d.h) |
+
+수명주기·저장소는 `platform.h`의 기존 PAL을 대체하지 않습니다. 플랫폼 드라이버가
+pause/suspend/resume/shutdown을 전달하고 게임이 체크포인트의 직렬화·복원을 구현합니다.
+오디오 정지와 재개 역시 게임 콜백에서 연결합니다. 프로세스 메모리 스냅샷은 저장하지 않습니다.
+PC 파일 저장은 임시 파일 교체와 CRC 검사를 제공하지만 정전 내구성은 보장하지 않습니다.
+SD·플래시·NVS에는 별도 저장소 콜백을 연결해야 합니다.
+
+가산 합성은 프레임버퍼에 색을 더하는 단계이며 재질 레이어의 `PIXELICA_TEXTURE_ADD`와 다릅니다.
+조명은 Gouraud 방식이고, 빛 패치와 접촉 그림자는 지정한 면에 놓는 효과입니다.
+자동 그림자 추적·실루엣 계산은 없습니다. 블룸은 명시적 발광 이미지/마스크만 처리하며
+호출자 작업 버퍼를 사용합니다. 발광 마스크의 알파 판정·그리기 순서·최종 깊이 필터링은
+[pixel_light.md](pixel_light.md)의 계약을 따릅니다.
+
+### 42.2 개발 빌드와 집중 검사
+
+일반 HEADLESS 빌드는 3장의 명령을 사용할 수 있습니다. 물 기능 개발은 기본 SDK 빌드와
+구분된 디렉터리를 사용합니다.
+
+```sh
+cmake -S . -B build-water-dev -DCMAKE_BUILD_TYPE=Debug \
+  -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_BUILD_WATER=ON \
+  -DPIXELICA_WARNINGS_AS_ERRORS=ON
+cmake --build build-water-dev --parallel
+ctest --test-dir build-water-dev --output-on-failure
+ctest --test-dir build-water-dev \
+  -R '(^test_water|hello_water|sdk_installed_water|water_source_addon)' --output-on-failure
+cmake -E make_directory build-water-dev/captures
+./build-water-dev/hello_water --frames 420 --out-dir build-water-dev/captures --scale 2
+```
+
+Visual Studio 등 다중 구성 생성기는 빌드·CTest에 `--config Debug` / `-C Debug`를 지정하고,
+실행 파일은 `build-water-dev/Debug/hello_water.exe`를 사용합니다.
+`hello_water`와 `hello_pixel_light`는 자체 HEADLESS 검증 프로그램이며 SDL3 옵션을 켜도
+인터랙티브 창 데모가 되지는 않습니다. `hello_lighting` 등 공통 드라이버 예제는 SDL3로
+빌드하면 창을 사용할 수 있습니다.
+
+| 변경 범위 | 집중 검사 |
+|---|---|
+| 수명주기·저장소 | `test_app`, `test_storage`, `test_save`, `lifecycle_checkpoint_restart` |
+| 조명·클립·가산 합성 | `test_math`, `test_lighting`, `test_anim_clip`, `test_blend_add`, `test_blend_add2d`; 스켈레톤 ON이면 `test_skeleton` |
+| 픽셀 조명 도구 | `test_light_mask`, `test_light_draw`, `test_bloom`, `smoke_hello_pixel_light`, `smoke_hello_pixel_light_tiny` |
+| 수면·부력·3D 어댑터 | `test_water`, `test_water3d`, `smoke_hello_water`, `smoke_hello_water_long_session`, `hello_water_captures` |
+| 물 애드온 배포 | `sdk_installed_water`, `water_source_addon`, `python_unittest`의 `tools/tests/test_package_water.py` |
+
+대상 테스트는 옵션·렌더러 구성에 따라 생략될 수 있습니다. `ctest -N`으로 등록 목록을 확인하고,
+코드 변경에 맞는 집중 검사 후 필요한 회귀 검사를 실행합니다. sanitizer는
+`-DPIXELICA_SANITIZE=ON` 구성에서 확인합니다.
+
+### 42.3 수면·부력 모델과 게임 연결
+
+수면은 최대 8개의 해석적 파동을 합친 높이장입니다. 시간은 `double`이고, 진행 방향·높이·
+노멀·속도는 같은 수면 조회에서 얻습니다. 그리기와 부력에 같은 파라미터·시간을 넘깁니다.
+격자 렌더링에는 근사 오차가 있으므로 실제 삼각형 높이 조회로 오차를 검사합니다.
+
+부력 지점은 몸체 좌표의 위치·면적·최대 잠김 깊이·저항 계수를 가집니다.
+`pixelica_water_load()`는 중력을 포함한 힘과 토크를 반환하고,
+`pixelica_water_body_step()`는 선택적으로 사용할 수 있는 단일 몸체 적분기입니다.
+게임이 고정 시간 간격·질량·주축 관성을 정합니다. 선형 저항이 순간적으로 에너지를 소산해도
+명시적 적분이 항상 안정적인 것은 아닙니다. 시간 간격 조건은 [water.md](water.md)를 따릅니다.
+
+컵에서 쏟아지는 입자 유체, 뒤집히는 파도, 물보라, 일반 강체 충돌은 포함하지 않습니다.
+뗏목 데모는 잔잔한 물에서의 평형, 파도에서의 기울기·잠김 범위, 시간에 따른 결정적 출력,
+렌더 수면과 물리 수면의 차이를 검사하는 예제입니다.
+
+### 42.4 기본 SDK와 별도 물 애드온 배포
+
+물 옵션이 꺼진 기본 SDK에는 물 헤더·라이브러리·의존성이 추가되지 않습니다.
+물 코어의 의존성은 `Pixelica::common`이고, 3D 어댑터는 3D 코어를 추가로 요구합니다.
+설치 후에는 독립 패키지 `find_package(PixelicaWater CONFIG REQUIRED)`로 찾습니다.
+
+```sh
+python3 tools/package_water.py --build-dir build-water-package \
+  --output-dir dist/water-package --jobs 8
+```
+
+패키저는 새 빌드·출력 디렉터리를 사용하며 기존 결과를 덮어쓰지 않습니다.
+같은 디렉터리에 다음 결과가 생성됩니다.
+
+- `PixelicaWater-<version>-<platform>.zip`: Debug·Release 바이너리, 물 헤더, CMake 패키지, 가이드·매니페스트.
+- `PixelicaWater-<version>-source.zip`: 설치된 기본 SDK에 대해 빌드하는 독립 소스 애드온과 뗏목 예제.
+- `SHA256SUMS.txt`: 두 압축 파일의 체크섬.
+
+바이너리는 기본 SDK와 컴파일러·아키텍처·구성이 맞아야 합니다. 바이너리 ZIP을 기본 SDK와
+같은 상위 디렉터리에 풀면 `Pixelica-<version>/` 아래에 물 파일이 합쳐집니다.
+소스 ZIP의 빌드·설치 명령은 압축 안의 README와 [water.md](water.md)를 사용합니다.
+현재 생성한 로컬 결과는 `dist/water-final/`이며 macOS ARM64와 공통 소스 ZIP입니다.
+원격 다운로드 페이지나 릴리스에는 게시하지 않았습니다.
+
+소스·가이드·데모가 바뀌면 새 출력 디렉터리에서 패키지를 다시 생성하고,
+체크섬·매니페스트·압축 소스의 일치 여부와 외부 소비자 빌드를 확인합니다.
+기본 SDK ZIP 자체를 물 애드온 생성만으로 갱신했다고 간주하지 않습니다.
+
+### 42.5 최근 검증과 남은 범위
+
+2026-10-15 macOS ARM64 / AppleClang의 물 ON HEADLESS Debug strict 구성에서
+전체 CTest **72/72**, 별도 재실행한 물 관련 **7/7**이 통과했습니다.
+물 코어·3D 어댑터·데모의 ASan/UBSan 검사, 설치된 바이너리 애드온의 외부 소비자,
+소스 애드온 빌드·설치·소비자, 기본 OFF 구성의 물 파일 격리를 확인했습니다.
+이 수치는 당시 구성의 검증 기록이며 옵션·테스트 추가에 따라 총수는 달라질 수 있습니다.
+
+Release 뗏목 데모의 기록은 256×192, 48×48 수면 격자, 부력 지점 4개, 420프레임 기준입니다.
+잔잔한 물의 평형 오차는 출력 정밀도에서 0, 파도 상태는 모든 지점이 잠긴 채 유지됐고,
+렌더/물리 높이 최대 차이는 약 **0.00418m**였습니다. 성능과 모델 한계의 자세한 조건은
+[water.md](water.md)를 확인합니다. 캡처는 `output/water/`에 있습니다.
+
+macOS의 기본 엔진과 SDL3 창 실행은 확인했지만 온라인 모듈은 여전히 Windows/Linux 경로만
+허용합니다. 물 애드온의 Windows/Linux 바이너리·실물 ESP32-P4 성능·전원 및 저장 장치 동작은
+이번 로컬 검증으로 확인되지 않습니다. 과거 Windows/Linux 테스트 기록과 구분합니다.

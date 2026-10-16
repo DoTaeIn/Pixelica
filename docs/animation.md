@@ -16,8 +16,12 @@
 | `PIXELICA_AnimPlayer`, `pixelica_anim_player_*` | 한 번 / 반복 / 왕복 재생 커서 (일시정지, 재시작, O(1) 대량 전진) |
 | `PIXELICA_Transform`, `pixelica_transform_matrix` | 이동·오일러 회전·스케일·**피벗**으로 부분(part)의 로컬 4x4 행렬 만들기 |
 
-의도적으로 **없는 것**: 스키닝/스켈레톤, IK, 클립 에셋 포맷, 이벤트 콜백, 블렌드 트리, 쿼터니언, 씬 노드 자동 갱신.
-필요하면 게임 코드가 이 조각들 위에 얹습니다.
+이 모듈에 의도적으로 **없는 것**: 스키닝/스켈레톤, IK, 클립 에셋 포맷, 블렌드 트리, 씬 노드 자동 갱신.
+
+본 단위 트랙, 쿼터니언 회전, 크로스페이드, 이벤트 콜백은 같은 공통 라이브러리의 **별도 헤더**
+[`anim_clip.h`](../include/pixelica/anim_clip.h)에 있습니다 ([`anim_clips.md`](anim_clips.md)).
+그쪽은 이 파일의 이징·보간 코드를 그대로 재사용하므로 두 계층의 샘플링 규칙이 어긋나지 않습니다.
+리그에 붙이려면 선택 스켈레톤 모듈([`rigging.md`](rigging.md))과 함께 쓰세요.
 
 > **범위 정정.** 이 기본(코어) 애니메이션 모듈에는 지금도 스켈레톤·스키닝·IK가 **없습니다**. 그것들은 코어와 분리된 **선택
 > 모듈**(`PIXELICA_BUILD_SKELETON`, `PIXELICA_BUILD_IK`, 기본 `OFF`)로만 제공되며 [`rigging.md`](rigging.md)에 설명되어 있습니다.
@@ -421,11 +425,16 @@ ctest --test-dir build -C Debug -R "test_animation|smoke_hello_animation" --outp
 
 ## 10. 제한
 
-- 스칼라 트랙만 있습니다. 위치·회전 같은 벡터는 성분마다 트랙을 따로 둡니다.
-- 오일러 XYZ이며 쿼터니언/구면 보간이 없습니다. 각도는 최단 호 없이 직접 보간됩니다.
+- 스칼라 트랙만 있습니다. 위치·회전 같은 벡터는 성분마다 트랙을 따로 두거나,
+  벡터·쿼터니언 트랙을 가진 [`anim_clip.h`](../include/pixelica/anim_clip.h)를 쓰세요.
+- `PIXELICA_Transform`은 오일러 XYZ이며 각도를 최단 호 없이 직접 보간합니다. 쿼터니언과
+  최단 호 구면 보간은 `PIXELICA_Quat`/`PIXELICA_TRS` 쪽에 있습니다([`anim_clips.md`](anim_clips.md)).
 - 이음매 없는 LOOP는 마지막 키가 틱 D에서 보이지 않는 점을 고려해 설계해야 합니다 (5.1절).
-- 계층, 본, 스키닝, IK, 이벤트, 블렌딩, 클립 에셋 파일이 없습니다(코어 기준). 본 계층 포즈·스키닝·두 본 IK가 필요하면 선택 모듈
-  ([`rigging.md`](rigging.md))을 켜세요. 이벤트가 필요하면 `player_tick`의 틱 값을 직접 비교하세요.
+  클립 플레이어도 같은 규칙입니다.
+- 이 헤더 자체에는 계층, 본, 스키닝, IK, 이벤트, 블렌딩, 클립 에셋 파일이 없습니다.
+  본 계층 포즈·스키닝·두 본 IK는 선택 모듈([`rigging.md`](rigging.md)),
+  본별 클립·크로스페이드·이벤트는 [`anim_clips.md`](anim_clips.md)를 보세요. 이 모듈만으로
+  이벤트를 흉내 내려면 `player_tick`의 틱 값을 직접 비교하면 됩니다.
 - 자동으로 씬 노드나 `bounds`를 갱신하지 않습니다 (6.4절).
 - 내부 계산에 `double`을 쓰므로 단정밀도 FPU만 있는 MCU에서는 비용이 더 들 수 있으나, **MCU에서의 `double` 비용은 측정하지 않았습니다 (보드 없음).**
   `pixelica_transform_matrix`는 고정 크기 O(1)이며 `sinf`/`cosf` 호출과 16개 원소의 변환·검사를 포함합니다.

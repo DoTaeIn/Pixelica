@@ -127,9 +127,10 @@ endif()
 
 ## 3. 스켈레톤 모듈 (`pixelica/skeleton.h`)
 
-계층 본의 **포즈 계산**과 **정점 위치만의 선형 블렌드 스키닝**(법선 없음, 라이트 없는 렌더러용)입니다. 클립 파일 포맷,
-쿼터니언, 블렌드 트리, 임포터는 없습니다. 회전은 호출자가 만든 4x4 행렬(`pixelica_mat4_rotation_*`, `pixelica_mat4_translation` 등)로
-넘깁니다.
+계층 본의 **포즈 계산**과 **선형 블렌드 스키닝**(정점 위치 3.5절, 법선 3.6절)입니다. 클립 파일 포맷, 블렌드 트리, 임포터는
+없습니다. 회전은 호출자가 만든 4x4 행렬(`pixelica_mat4_rotation_*`, `pixelica_mat4_translation`, 또는 클립의
+`pixelica_trs_matrix`)로 넘깁니다. 쿼터니언과 클립 재생 자체는 이 모듈이 아니라 공통 라이브러리에 있습니다
+(`pixelica/math.h`, `pixelica/anim_clip.h`).
 
 ### 3.1 행렬 규약
 
@@ -226,7 +227,50 @@ PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
 `out_positions`의 `vertex_count`개 정점은 호출자 소유이고 그대로 `PIXELICA_Mesh.vertices`로 쓸 수 있습니다. 바인드 메시는 읽기 전용
 으로 두고 매 업데이트마다 별도 배열에 스키닝하는 방식이 기본 사용법입니다(데모).
 
-### 3.6 오류 순서
+### 3.6 법선 스키닝
+
+위치 스키닝의 **방향 쌍**입니다. 결과는 단위 길이이므로 그대로
+`PIXELICA_Lighting.normals`에 넣어 `pixelica_draw_mesh_lit`로 그릴 수 있습니다
+([`lighting.md`](lighting.md)).
+
+```c
+PIXELICA_Status pixelica_skeleton_normal_palette(const float (*palette)[16],
+                                                 uint32_t bone_count,
+                                                 float (*out_normal_palette)[16],
+                                                 float (*scratch)[16],
+                                                 size_t scratch_matrices);
+
+PIXELICA_Status pixelica_skeleton_skin_normals(const PIXELICA_Vec3 *bind_normals,
+                                               const PIXELICA_SkinWeight *weights,
+                                               size_t vertex_count,
+                                               const float (*normal_palette)[16],
+                                               uint32_t bone_count,
+                                               PIXELICA_Vec3 *out_normals,
+                                               PIXELICA_Vec3 *scratch,
+                                               size_t scratch_vertices);
+```
+
+정점 `v`의 정규화된 가중치 `n_k`와 `normal_palette[bone_k]`의 3x3 회전부 `R_k`에 대해
+
+```
+raw    = Σ_{w_k > 0} n_k * (R_k * bind_normals[v])
+out[v] = raw / |raw|
+```
+
+이동 열은 **무시**합니다(방향이므로). 인자·개수·가중치·앨리어싱 규칙과 실패 시 출력
+보존은 `pixelica_skeleton_skin`과 완전히 같고, 두 가지가 더 있습니다.
+
+- 바인드 법선은 유한하고 **0이 아니어야** 합니다.
+- 블렌드된 `raw`가 0이면 정규화할 방향이 없으므로 `PIXELICA_ERR_INVALID_ARG`입니다
+  (정확히 반대인 두 법선을 같은 가중치로 섞는 경우).
+
+**`normal_palette`를 꼭 만들어야 하나?** 본이 회전·이동·**균등** 스케일뿐이면 그 3x3이
+이미 각도를 보존하므로 일반 포즈 팔레트를 그대로 넘기면 됩니다(차이는 본마다의 양수
+배율뿐이고 마지막 정규화가 지웁니다). 본에 **비균등 스케일이나 전단**이 있을 때만
+`pixelica_skeleton_normal_palette`로 역전치 팔레트를 만들어야 법선이 표면에 수직으로
+남습니다. 한 축 스케일이 0인 본은 법선 행렬이 없으므로 `PIXELICA_ERR_INVALID_ARG`입니다.
+
+### 3.7 오류 순서
 
 `PIXELICA_ERR_INVALID_ARG`: NULL 필수 포인터, 0 또는 너무 큰 개수, 크기 계산 오버플로, 금지된 겹침/주소 범위 wrap, 유한하지
 않거나 아핀이 아니거나 범위를 벗어난 데이터, float에 담기지 않는 결과. `PIXELICA_ERR_NO_MEMORY`는 워크스페이스가 작을 때만.
@@ -240,7 +284,7 @@ PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
 두 API 모두 어떤 실패에서도 출력 버퍼(`world`/`palette`, `out_positions`)는 바이트 단위로 변하지 않습니다. 실패 뒤 `scratch`
 내용은 규정되지 않습니다(`skeleton.h`와 같음).
 
-### 3.7 예
+### 3.8 예
 
 설치된 스켈레톤 SDK만으로 빌드되는 완결된 C11 프로그램입니다(IK 의존 없음). 본 2개, 바인드 점 `(2,0,0)`, 아래 본의 inverse bind는
 `T(-1,0,0)`, 로컬 행렬은 루트 `I`, 아래 본 `T(1,0,0) * Rz(pi/2)`입니다. 점은 아래 본에만 묶여 있으므로 기대 결과는
@@ -425,6 +469,9 @@ CTest에는 `smoke_hello_rig`(`--frames 30 --hidden`)가 등록됩니다. 이 �
 `test_skeleton`은 바인드 포즈 항등, 계층·다중 루트, 역바인드 팔레트, 2본/4본 블렌드, 거의 정규화된 가중치, 제자리 스키닝,
 전체 입력 검증(참조되지 않은 팔레트·역바인드, 사슬 끝의 NaN/inf/오버플로), 부모 검증(순환·자기·후행 참조·미지의 음수), 워크스페이스
 부족과 에일리어싱/부분 겹침, 실패 시 출력 바이트 보존, double 기준과의 결정적 랜덤 비교를 다룹니다.
+법선 쪽은 강체 팔레트가 그대로 법선 행렬이 되는지, 비균등 스케일에서 역전치가 수직성을 지키고 일반 팔레트는 지키지
+못하는지, 회전·블렌드 결과가 단위 길이인지, 이동 열이 새지 않는지, 상쇄되는 영향과 특이 팔레트가 거부되는지를 함께
+확인합니다.
 
 ## 7. ESP32-P4 준비 (빌드 준비만)
 
@@ -450,10 +497,14 @@ idf.py -DPIXELICA_BUILD_SKELETON=ON -DPIXELICA_BUILD_IK=ON build
 
 ## 8. 하지 않는 것(한계)
 
-- 클립/애니메이션 에셋 포맷, 임포터(glTF 등), 쿼터니언 API, 블렌드 트리, 이벤트: 없음. 본 회전은 호출자가 행렬로 만듭니다.
-  기본 애니메이션 모듈의 키프레임 샘플링과 플레이어를 각도/위치 입력에 쓸 수 있습니다.
+- 애니메이션 에셋 포맷, 임포터(glTF 등): 없음. 클립 데이터는 호출자가 구성합니다.
+  **클립·쿼터니언·크로스페이드·이벤트는 공통 라이브러리에 있습니다**
+  (`pixelica/anim_clip.h`, [`anim_clips.md`](anim_clips.md)): 본별 TRS 트랙을 샘플링해
+  `pixelica_trs_matrix`로 로컬 행렬을 만든 뒤 `pixelica_skeleton_pose`에 넘기면 됩니다.
+  블렌드 트리는 없고, 섞기는 두 클립 사이 크로스페이드 하나뿐입니다.
 - 임의 길이 IK 체인, FABRIK/CCD, 각도 제한, 늘어남: 없음(두 본 해석해만).
-- 법선 스키닝, 정점 단위 라이트: 없음. 렌더러가 라이트 없는 플랫 컬러이므로 위치만 스키닝합니다.
+- 정점 단위 라이트는 렌더러 쪽 기능입니다([`lighting.md`](lighting.md)). 이 모듈은 위치와
+  법선 스키닝(3.6절)까지만 제공하고, 접선(tangent)·바이노멀 스키닝은 없습니다.
 - **정점당** 4개 영향까지, 본 최대 65536개(인덱스 `uint16_t`).
 - 비용은 O(N 본 + V 정점 * 4)이고 워크스페이스 메모리는 결정적입니다(호출자 배열 크기가 곧 한계). `float`=4바이트일 때:
   - 포즈: world + palette + scratch = `256 * N` 바이트(각 행렬 64바이트 * N * 4배열). 입력 `local`(`64 * N`)과 `PIXELICA_Bone`

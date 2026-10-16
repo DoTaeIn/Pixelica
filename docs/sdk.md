@@ -25,7 +25,7 @@ hybrid install adds). `cmake --install` puts this under the prefix:
 | Path | Content |
 |---|---|
 | `include/pixelica/*.h` | common and 3D public headers (`pixelica/pixelica.h` exposes the 3D API; module headers are included explicitly) |
-| `lib/pixelica_common.lib` / `lib/libpixelica_common.a` (`pixelica_commond.*` for Debug) | shared math, input, animation, assets, save, screens and i18n |
+| `lib/pixelica_common.lib` / `lib/libpixelica_common.a` (`pixelica_commond.*` for Debug) | shared math, input, animation, assets, save, storage, lifecycle, screens and i18n |
 | `lib/pixelica_core.lib` / `lib/libpixelica_core.a` (`pixelica_cored.*` for Debug) | static core library |
 | `include/pixelica/ui.h`, `lib/pixelica_ui.lib` / `lib/libpixelica_ui.a` (`pixelica_uid.*` for Debug) | built-in UI, included in both SDKs |
 | `lib/cmake/PixelicaUI/`, `share/Pixelica/examples/hello_ui/` | independent UI package and copyable menu demo |
@@ -100,7 +100,7 @@ Nothing here has run on a physical board.
 |---|---|---|
 | Components | `common`, `renderer2d` | `common`, `core` (= `renderer3d`), opt-in `hybrid`, optional `skeleton` / `ik` |
 | Package | `find_package(Pixelica2D CONFIG REQUIRED)` -> `Pixelica2D::core` (also loads the matching `Pixelica` common config beside it) | `find_package(Pixelica CONFIG REQUIRED)` -> `Pixelica::core` |
-| Headers | `status input platform math animation image assets_common renderer2d` | the same common headers plus `pixelica.h renderer.h assets.h scene.h` (and `hybrid.h` when installed) |
+| Headers | every common header (`status input platform math animation image assets_common save storage app screens i18n camera debug chunks framebuffer draw_options collision2d`) plus `renderer2d` | the same common headers plus `pixelica.h renderer.h assets.h scene.h` (and `hybrid.h` when installed) |
 | 3D renderer, context, scene, mesh/cart code | **absent** | present |
 | Starter project | `sdk/template2d`, installed as `share/Pixelica/template2d` (`Pixelica2D::core` only, no 3D header) | `sdk/template` |
 | Asset converter `pixelica_pack` | not included | `share/Pixelica/tools/pixelica_pack` |

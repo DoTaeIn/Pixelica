@@ -69,7 +69,9 @@ CLAMP/REPEAT and OPAQUE/TEST/BLEND through `pixelica/draw_options.h`.
 `pixelica2d_draw_sprite_ex` accepts the same options for sprites. RGB565 textures
 keep their existing format; optional per-texel alpha is a separate byte plane.
 BLEND depth-tests without writing depth; callers draw it back-to-front after
-opaque/TEST geometry. See [texture_options.md](texture_options.md).
+opaque/TEST geometry. ADD does the same but accumulates with saturating RGB565
+channels and needs no sorting. See [texture_options.md](texture_options.md) and
+[blending.md](blending.md).
 
 ## Textures and materials
 
@@ -130,6 +132,18 @@ hierarchy type, and scene nodes and their bounds are never updated automatically
 unchanged. Details, time and endpoint rules and the interactive demo: [`animation.md`](animation.md) (Korean).
 Executed checks and actual framebuffer captures: `ANIMATION_AUDIT.md` (local-only record).
 
+### Animation clips
+
+`anim_clip.h` (also common, no renderer) builds skeletal **clips** on top of that: per-bone translation /
+rotation / scale tracks sampled into one `PIXELICA_TRS` per bone index, a `PIXELICA_ClipPlayer` with
+once/loop playback, crossfades between two clips, and timed events reported through a callback. Rotations are
+quaternions (`PIXELICA_Quat` in `math.h`, w scalar, shortest-arc interpolation). Events use the conventional
+swept `(previous, current]` window, so a marker fires on the step that reaches its tick, splitting an advance
+never changes what is reported, and loop wraps and the final tick of a non-looping clip are handled
+explicitly. `pixelica_trs_matrix` turns a sampled bone into the local matrix `pixelica_skeleton_pose` wants.
+Nothing allocates; crossfade sampling takes a caller workspace. Rules, the event contract, the
+zero-initialization requirement and the interrupted-fade policy: [`anim_clips.md`](anim_clips.md) (Korean).
+
 ### Optional: skeleton and IK
 
 The core animation above has no skeleton or IK. Two **separate, default-off** modules (outside `pixelica_core`, not part
@@ -139,6 +153,9 @@ of `pixelica.h`, independent of each other) add them; details, ownership rules a
 - `pixelica_skeleton_pose` turns caller-supplied local affine matrices of a parent-before-child bone array into world and
   palette matrices (`palette = world * inverse_bind`, model space); `pixelica_skeleton_skin` does positions-only linear
   blend skinning (4 influences) into a caller-owned vertex array that can be used directly as `PIXELICA_Mesh.vertices`.
+  `pixelica_skeleton_skin_normals` is its direction counterpart: it blends and renormalizes per-vertex normals for
+  `PIXELICA_Lighting.normals`, taking either the ordinary palette (exact for rigid or uniformly scaled bones) or the
+  inverse-transpose palette from `pixelica_skeleton_normal_palette` (needed for non-uniform scale or shear).
   Caller-owned workspaces are mandatory (`2 * bone_count` matrices, `vertex_count` vertices); on every failure the
   logical outputs stay byte-for-byte unchanged.
 - `pixelica_ik_two_bone` solves a two-bone chain analytically and returns joint/end positions only (pole is a point,
@@ -158,6 +175,15 @@ the optional-to-call HUD uses the bundled `Pixelica::ui` library. Neither common
 Chunk management (`Pixelica::common`): [chunks.md](chunks.md) covers checked coordinates,
 inclusive target ranges, caller-owned slots, load/unload callbacks, budgets and retry after a failed load.
 
+Game lifecycle and save storage (`Pixelica::common`, no renderer, clock or heap):
+[lifecycle.md](lifecycle.md) covers the initialization / pause-resume / suspend-resume /
+shutdown state machine and checkpoints, which are the game's own serialized bytes rather than
+a process snapshot. [storage.md](storage.md) covers game ids, numbered slots, the
+`PIXELICA_StorageOps` platform table and the PC filesystem adapter; both reuse the versioned
+CRC-32 envelope of [save.md](save.md). `examples/hello_lifecycle` is a complete program and the
+CTest `lifecycle_checkpoint_restart` runs it as several processes to show a checkpoint surviving
+a restart.
+
 Offscreen targets, borrowed frame/texture views and caller-owned color/depth snapshots:
 [framebuffer.md](framebuffer.md). Copy and sampling APIs belong to `Pixelica::common`
 and also accept 2D buffers with a caller-supplied stride; context adapters belong to 3D.
@@ -165,7 +191,25 @@ and also accept 2D buffers with a caller-supplied stride; context adapters belon
 material sampling, a pixel callback after material evaluation, and up to four world clip planes.
 These mesh effects apply to 3D and the 3D portion of hybrid rendering.
 
+Opt-in normal-based lighting: [lighting.md](lighting.md) covers `pixelica_draw_mesh_lit`,
+`PIXELICA_Lighting` (ambient plus up to four directional Lambert lights, evaluated per vertex and
+interpolated), the inverse-transpose normal matrix (`pixelica_mat4_normal_matrix`) that keeps normals
+perpendicular under non-uniform scale and shear, and the validation that keeps a rejected draw from
+touching a pixel. Every existing draw entry point stays unlit and bit-identical.
+
+Framebuffer additive blending: [blending.md](blending.md) covers `PIXELICA_ALPHA_ADD`, shared by the
+3D and 2D draw paths, its saturating RGB565 channels, its effective alpha, its depth semantics
+(tested, never written) and why it is not the material-layer `PIXELICA_TEXTURE_ADD`.
+
+Pixel lighting tools: [pixel_light.md](pixel_light.md) covers `pixelica/light.h` (common library) -
+window/ellipse shape masks, flat tint images, receiver-plane quads including projecting an opening
+along a light direction, and selective bloom driven by an explicit emissive mask or image - plus the
+3D helpers `pixelica_draw_light` / `pixelica_draw_contact_shadow` and the
+`pixelica_emissive_mask_pixel` effects hook. Patches and shadows are depth-tested and never write
+depth; bloom only ever adds, so pixels the glow does not reach keep their exact value. None of this
+computes visibility: it places geometry the caller asked for.
+
 See `sdk/template/src/` (portable `game.c` plus a headless driver) and `examples/` (hello_triangle, hello_cube,
-hello_animation, pixel_room; `hello_rig` with the optional modules) for complete uses; `docs/sdk.md` explains how to build one against the installed package.
+hello_animation, hello_lighting, hello_pixel_light, pixel_room; `hello_rig` with the optional modules) for complete uses; `docs/sdk.md` explains how to build one against the installed package.
 Test coverage of this API (loaders, renderer, scene/AABB, input replay) and its results are in
 `docs/REMAINING_AUDIT.md`.

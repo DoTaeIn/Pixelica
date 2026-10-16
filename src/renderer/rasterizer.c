@@ -276,6 +276,20 @@ static uint16_t pixelica_blend565(uint16_t s, uint16_t d, uint32_t a)
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
+/* Framebuffer additive blend, per native 5/6/5 channel:
+ * d + (s*a + 127)/255, saturated at the channel maximum. Distinct from
+ * pixelica_combine565's PIXELICA_TEXTURE_ADD, which combines a texture layer
+ * into the fragment color before it ever reaches the framebuffer. */
+static uint16_t pixelica_add565(uint16_t s, uint16_t d, uint32_t a)
+{
+    const uint32_t r = ((d >> 11) & 31u) + ((((s >> 11) & 31u) * a + 127u) / 255u);
+    const uint32_t g = ((d >> 5) & 63u) + ((((s >> 5) & 63u) * a + 127u) / 255u);
+    const uint32_t b = (d & 31u) + (((s & 31u) * a + 127u) / 255u);
+
+    return (uint16_t)(((r < 31u ? r : 31u) << 11) | ((g < 63u ? g : 63u) << 5) |
+                      (b < 31u ? b : 31u));
+}
+
 /* Layer combine of texel t onto previous color p, then mixed by opacity. */
 static uint16_t pixelica_combine565(uint16_t p, uint16_t t,
                                     PIXELICA_TextureCombine combine,
@@ -590,6 +604,8 @@ void pixelica_raster_triangle(const PIXELICA_RasterTarget *target,
                             if (alpha < 255u) {
                                 src = pixelica_blend565(src, crow[px], alpha);
                             }
+                        } else if (mode == PIXELICA_ALPHA_ADD) {
+                            src = pixelica_add565(src, crow[px], alpha);
                         } else {
                             drow[px] = d;
                         }

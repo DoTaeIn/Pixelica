@@ -53,9 +53,23 @@ class DocumentLayoutTests(unittest.TestCase):
             self.assertFalse((base / "2d.md").exists())
 
 # --- synthetic SDK file lists ------------------------------------------------
+# The reference guides every SDK profile must ship under share/Pixelica/docs/.
+# Written out here on purpose: CMakeLists.txt installs them and package_sdk.py
+# requires them, and this third copy is what notices when one of those two is
+# changed without the other.
+EXPECTED_GUIDES = (
+    "save.md", "storage.md", "lifecycle.md", "screens.md", "i18n.md",
+    "texture_options.md", "camera.md", "debug.md", "chunks.md",
+    "material_layers.md", "framebuffer.md", "render_effects.md",
+    "lighting.md", "blending.md", "anim_clips.md", "pixel_light.md",
+)
+
 COMMON_FILES = (
     ["include/pixelica/" + h for h in ps.COMMON_HEADERS]
-    + ["share/Pixelica/docs/" + name for name in ("save.md", "screens.md", "i18n.md", "texture_options.md", "camera.md", "debug.md", "chunks.md", "material_layers.md", "framebuffer.md", "render_effects.md")]
+    # Spelled out rather than taken from ps.COMMON_GUIDES, so this is an
+    # independent expectation of what an SDK must contain; the test below
+    # compares the two lists and fails if either side drifts.
+    + ["share/Pixelica/docs/" + name for name in EXPECTED_GUIDES]
     + ["share/Pixelica/tools/pixelica_font.py"]
     + ["include/pixelica/ui.h", "lib/libpixelica_ui.a", "lib/libpixelica_uid.a",
        "lib/cmake/PixelicaUI/PixelicaUIConfig.cmake",
@@ -289,6 +303,22 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(ps.check_variant_files("Pixelica2D", no_common_libs))
         self.assertTrue(ps.check_variant_files("Pixelica3D", [f for f in FILES_3D if "hybrid" not in f]))
         self.assertTrue(ps.check_variant_files("Pixelica3D", [f for f in FILES_3D if "pixelica_core" not in f]))
+
+    def test_common_guides_are_required_in_both_sdks(self):
+        # The inventory the packager enforces is the one this test expects.
+        self.assertEqual(sorted(ps.COMMON_GUIDES), sorted(EXPECTED_GUIDES))
+        self.assertEqual(len(set(ps.COMMON_GUIDES)), len(ps.COMMON_GUIDES))
+        # Dropping any single guide must be reported, for either SDK.
+        for variant, files in (("Pixelica2D", FILES_2D), ("Pixelica3D", FILES_3D)):
+            self.assertEqual(ps.check_variant_files(variant, files), [])
+            for guide in EXPECTED_GUIDES:
+                removed = "share/Pixelica/docs/" + guide
+                self.assertIn(removed, files)
+                with self.subTest(variant=variant, missing=guide):
+                    problems = ps.check_variant_files(
+                        variant, [p for p in files if p != removed])
+                    self.assertTrue(problems)
+                    self.assertTrue(any(guide in p for p in problems), problems)
 
     def test_library_dirs_other_than_lib_are_understood(self):
         files = [f.replace("lib/", "lib64/", 1) if f.startswith("lib/") else f for f in FILES_2D]

@@ -61,14 +61,47 @@ foreach(name IN LISTS PIXELICA_COMMON_SOURCE_NAMES)
   list(APPEND pixelica_common_files "${PIXELICA_SOURCE_DIR}/src/${name}")
 endforeach()
 list(APPEND pixelica_common_files "${PIXELICA_SOURCE_DIR}/src/assets/container.h")
+list(APPEND pixelica_common_files "${PIXELICA_SOURCE_DIR}/src/game/save_internal.h")
+list(APPEND pixelica_common_files "${PIXELICA_SOURCE_DIR}/src/animation/anim_internal.h")
+list(APPEND pixelica_common_files "${PIXELICA_SOURCE_DIR}/src/light/light_internal.h")
 foreach(file IN LISTS pixelica_common_files)
   pixelica_scan_file("${file}")
 endforeach()
 
-# Common headers also must not need the 2D module.
-set(pixelica_forbidden_headers ${PIXELICA_RENDERER3D_HEADER_NAMES} hybrid.h renderer2d.h)
+# Common headers also must not need the 2D module, and nothing in the base
+# engine (src/ or include/pixelica/) may reach into an OPTIONAL module: that is
+# what keeps a default build, install and package free of water code.
+set(pixelica_forbidden_headers ${PIXELICA_RENDERER3D_HEADER_NAMES} hybrid.h renderer2d.h
+    water.h water3d.h)
 foreach(name IN LISTS PIXELICA_COMMON_HEADER_NAMES)
   pixelica_scan_file("${PIXELICA_SOURCE_DIR}/include/pixelica/${name}")
+endforeach()
+# This pass is ONLY about optional-module headers: the 3D renderer's own
+# sources legitimately include its internal files, so the path rules are
+# switched off for it and restored afterwards.
+set(pixelica_saved_paths ${pixelica_forbidden_paths})
+set(pixelica_forbidden_paths "")
+set(pixelica_forbidden_headers water.h water3d.h particles.h particles2d.h particles25d.h
+    shaders.h skeleton.h ik.h input_manager.h online.h audio.h)
+foreach(name IN LISTS PIXELICA_RENDERER3D_HEADER_NAMES)
+  pixelica_scan_file("${PIXELICA_SOURCE_DIR}/include/pixelica/${name}")
+endforeach()
+file(GLOB_RECURSE pixelica_engine_sources "${PIXELICA_SOURCE_DIR}/src/*.c"
+     "${PIXELICA_SOURCE_DIR}/src/*.h")
+foreach(file IN LISTS pixelica_engine_sources)
+  pixelica_scan_file("${file}")
+endforeach()
+set(pixelica_forbidden_paths ${pixelica_saved_paths})
+
+# The water core is renderer-independent: it may use the common library only.
+# The water3d adapter is the one place allowed to include a 3D header, so it is
+# deliberately NOT scanned here.
+set(pixelica_forbidden_headers ${PIXELICA_RENDERER3D_HEADER_NAMES} hybrid.h renderer2d.h
+    particles2d.h particles25d.h water3d.h)
+foreach(name water.c include/pixelica/water.h)
+  if(EXISTS "${PIXELICA_SOURCE_DIR}/modules/water/${name}")
+    pixelica_scan_file("${PIXELICA_SOURCE_DIR}/modules/water/${name}")
+  endif()
 endforeach()
 
 set(pixelica_forbidden_headers ${PIXELICA_RENDERER3D_HEADER_NAMES} hybrid.h)
@@ -107,4 +140,4 @@ if(pixelica_errors)
   list(JOIN pixelica_errors "\n  " joined)
   message(FATAL_ERROR "[boundary] 3D-free code depends on the 3D renderer:\n  ${joined}")
 endif()
-message(STATUS "[boundary] OK: source/header lists match the tree; common, 2D, skeleton, IK and SDL platform code include no 3D header")
+message(STATUS "[boundary] OK: source/header lists match the tree; common, 2D, skeleton, IK and SDL platform code include no 3D header; the base engine includes no optional-module header; the water core includes no renderer header")

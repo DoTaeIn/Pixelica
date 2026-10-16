@@ -12,9 +12,13 @@
 
 set(PIXELICA_COMMON_SOURCE_NAMES
   animation/animation.c
+  animation/anim_clip.c
   assets/container.c
   assets/texture_asset.c
+  game/app.c
   game/save.c
+  game/storage.c
+  game/storage_fs.c
   game/screens.c
   game/i18n.c
   game/camera.c
@@ -23,13 +27,17 @@ set(PIXELICA_COMMON_SOURCE_NAMES
   game/framebuffer.c
   game/collision2d.c
   input/input.c
-  math/mat4.c)
+  light/bloom.c
+  light/light_mask.c
+  math/mat4.c
+  math/quat.c)
 
 set(PIXELICA_RENDERER3D_SOURCE_NAMES
   assets/cart.c
   assets/mesh_asset.c
   core/context.c
   core/framebuffer.c
+  renderer/light_draw.c
   renderer/pipeline.c
   renderer/rasterizer.c
   scene/aabb.c
@@ -44,16 +52,20 @@ set(PIXELICA_COMMON_HEADER_NAMES
   platform.h
   math.h
   animation.h
+  anim_clip.h
   image.h
   draw_options.h
   assets_common.h
+  app.h
   save.h
+  storage.h
   screens.h
   i18n.h
   camera.h
   debug.h
   chunks.h
   framebuffer.h
+  light.h
   collision2d.h)
 
 set(PIXELICA_RENDERER3D_HEADER_NAMES

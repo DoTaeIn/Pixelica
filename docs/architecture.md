@@ -42,8 +42,10 @@ The tree is split into independently usable pieces (see `2D_25D_PLAN.md` (local-
 usage and `DIMENSIONS_AUDIT.md` (local-only record) for the verification record):
 
 ```text
-Pixelica::common    src/math/mat4.c, input/input.c, animation/animation.c, assets/container.c, assets/texture_asset.c
-                    headers: status input platform math animation image assets_common      (no renderer, no context)
+Pixelica::common    src/math/{mat4,quat}.c, input/input.c, animation/{animation,anim_clip}.c,
+                    assets/container.c, assets/texture_asset.c, src/game/* (lifecycle, storage, ...)
+                    headers: status input platform math animation anim_clip image assets_common ...
+                                                                              (no renderer, no context)
 Pixelica::ui        modules/ui, always built/bundled; links common, no renderer/SDL/heap
 Pixelica::core      the other src/ files (renderer, context, scene, mesh/cart)    links common PUBLIC  (alias renderer3d)
 Pixelica::renderer2d  modules/renderer2d  (alias Pixelica2D::core)               links common, NO 3D code, NO 3D headers
@@ -220,12 +222,19 @@ The 2D / 2.5D extension is recorded in `DIMENSIONS_AUDIT.md` (local-only record)
 UI를 찾을 수 있습니다. 기본 글꼴은 ASCII이며 한글은 사용자 비트맵 콜백으로 공급합니다.
 상세 사용법과 소유권·오류 규칙은 [ui.md](ui.md)에 있습니다.
 
-## 저장·화면·번역 공통 기능
+## 수명주기·저장·화면·번역 공통 기능
 
-`src/game`의 저장·화면 전환·다국어는 `Pixelica::common`에 포함되어 렌더러 없이도 사용합니다.
+`src/game`의 수명주기·저장·화면 전환·다국어는 `Pixelica::common`에 포함되어 렌더러 없이도 사용합니다.
+수명주기(`app.c`)는 초기화 / pause·resume / suspend·resume / shutdown 상태 기계이며 시계도 전역 상태도 없습니다.
+전환은 드라이버가 일으키고, 모듈은 합법성·콜백 순서·체크포인트 시점만 강제합니다.
+체크포인트는 게임의 `save_checkpoint` 콜백이 만든 바이트이고 프로세스 스냅샷이 아닙니다.
+저장소(`storage.c`)는 게임 ID와 슬롯을 봉투에 묶어 플랫폼 블롭 저장소(`PIXELICA_StorageOps`)에 넘기므로
+PC 파일시스템 어댑터(`storage_fs.c`)든 임베디드 NVS든 같은 버전·CRC 규칙을 공유합니다.
+`storage_fs.c`는 `save.c`와 원자적 임시 파일 쓰기 코드(`src/game/save_internal.h`)를 공유합니다.
 저장은 게임이 직렬화한 바이트를 버전·길이·CRC가 있는 컨테이너로 감싸며, PC 파일 도우미는 임시 파일 작성 후 교체합니다.
 임베디드 저장 장치는 컨테이너 인코딩·디코딩에 게임의 NVS·SD 입출력을 연결합니다.
 화면 관리자는 기존 3D `scene`과 별개로 게임 진행 상태를 관리하며, 콜백 중 요청한 전환을 안전한 경계에서 처리합니다.
 번역표와 문자열은 호출자가 소유합니다. 언어를 바꾸면 UI 위젯의 문자열도 갱신합니다.
 폰트 도구는 게임에서 사용하는 유니코드 글자만 BDF에서 추출해 UI 콜백으로 변환합니다.
-자세한 계약은 [save.md](save.md), [screens.md](screens.md), [i18n.md](i18n.md)에 있습니다.
+자세한 계약은 [lifecycle.md](lifecycle.md), [storage.md](storage.md), [save.md](save.md),
+[screens.md](screens.md), [i18n.md](i18n.md)에 있습니다.

@@ -280,8 +280,15 @@ PIXELICA_Status pixelica2d_draw_sprite(PIXELICA2D_Context *ctx, const PIXELICA2D
  * options.opacity and the alpha plane. TEST/BLEND use
  * alpha = round(round(map*options.opacity/255)*sprite.opacity/255); TEST
  * discards alpha < cutoff and copies survivors opaque (depth_test/depth_write
- * honored), BLEND skips alpha 0, blends in RGB565, honors depth_test and never
- * writes depth. Invalid enums, inconsistent alpha pointer/size, or options/alpha
+ * honored). BLEND and ADD both skip alpha 0, honor depth_test and never write
+ * depth (depth_write is forced off), so overlapping transparent sprites do not
+ * occlude each other; per 5/6/5 channel they combine as
+ *   BLEND  dst = (src*alpha + dst*(255-alpha) + 127) / 255
+ *   ADD    dst = min(dst + (src*alpha + 127) / 255, channel max)
+ * ADD saturates instead of wrapping and, saturation aside, is independent of
+ * draw order, so additive sprites (glows, sparks, light cones) need no sorting.
+ * The color key still applies first, before alpha and blending.
+ * Invalid enums, inconsistent alpha pointer/size, or options/alpha
  * storage overlapping the color/depth buffer return PIXELICA_ERR_INVALID_ARG
  * with nothing changed.
  */

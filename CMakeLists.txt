@@ -40,6 +40,7 @@ option(PIXELICA_BUILD_ONLINE "Build optional room-code multiplayer and record bo
 option(PIXELICA_BUILD_AUDIO "Build optional WAV/PCM audio mixer (Pixelica::audio; with SDL3 also Pixelica::audio_sdl3 output)" OFF)
 option(PIXELICA_BUILD_PARTICLES "Build optional fixed-pool particles and adapters for enabled renderers" OFF)
 option(PIXELICA_BUILD_SHADERS "Build optional CPU RGB565 pixel shaders and framebuffer effects" OFF)
+option(PIXELICA_BUILD_WATER "Build optional analytic ocean surface + buoyancy (Pixelica::water; with the 3D core also the Pixelica::water3d draw adapter)" OFF)
 
 if(NOT PIXELICA_PLATFORM STREQUAL "SDL3" AND NOT PIXELICA_PLATFORM STREQUAL "HEADLESS")
   message(FATAL_ERROR "PIXELICA_PLATFORM must be SDL3 or HEADLESS (got '${PIXELICA_PLATFORM}')")
@@ -259,6 +260,12 @@ endif()
 if(PIXELICA_BUILD_SHADERS)
   add_subdirectory(modules/shaders)
 endif()
+# Water: renderer-independent core, plus its 3D adapter when the core exists.
+# The module installs its own independent PixelicaWater package, so nothing
+# here touches the base SDK loader or the base components.
+if(PIXELICA_BUILD_WATER)
+  add_subdirectory(modules/water)
+endif()
 if(PIXELICA_BUILD_PARTICLES)
   add_subdirectory(modules/particles)
   if(PIXELICA_INSTALL)
@@ -313,9 +320,9 @@ if(BUILD_TESTING)
   if(NOT PIXELICA_TEST_SOURCES)
     message(WARNING "BUILD_TESTING is ON but no tests/test_*.c files were found")
   endif()
-  set(PIXELICA_COMMON_TESTS test_math test_save test_screens test_i18n test_camera test_chunks test_framebuffer test_collision2d)
+  set(PIXELICA_COMMON_TESTS test_math test_anim_clip test_save test_storage test_app test_screens test_i18n test_camera test_chunks test_framebuffer test_collision2d test_light_mask test_bloom)
   set(PIXELICA_COMMON_MIXED_TESTS test_input test_animation)
-  set(PIXELICA_RENDERER2D_TESTS test_renderer2d test_texture_options2d)
+  set(PIXELICA_RENDERER2D_TESTS test_renderer2d test_texture_options2d test_blend_add2d)
   set(PIXELICA_HYBRID_TESTS test_hybrid)
   # Tests that need code which only examples/ builds. With PIXELICA_BUILD_EXAMPLES=OFF
   # that code does not exist, so the test would not link: it is omitted.
@@ -377,6 +384,19 @@ if(BUILD_TESTING)
           set(test_with_3d ON)
         endif()
       endif()
+    elseif(test_name STREQUAL "test_water")
+      # Common-only module: needs no renderer, so it is omitted only when the
+      # module itself is off.
+      if(NOT PIXELICA_BUILD_WATER)
+        set(test_omit_reason "PIXELICA_BUILD_WATER=OFF")
+      endif()
+      set(test_libs pixelica_water)
+    elseif(test_name STREQUAL "test_water3d")
+      if(NOT TARGET pixelica_water3d)
+        set(test_omit_reason "the water draw adapter needs PIXELICA_BUILD_WATER=ON and PIXELICA_BUILD_3D=ON")
+      endif()
+      set(test_libs pixelica_water3d)
+      set(test_with_3d ON)
     elseif(test_name STREQUAL "test_particles")
       if(NOT PIXELICA_BUILD_PARTICLES)
         set(test_omit_reason "PIXELICA_BUILD_PARTICLES=OFF")
@@ -662,7 +682,9 @@ if(PIXELICA_INSTALL)
     if(pixelica_common_component STREQUAL "core" AND NOT PIXELICA_BUILD_3D)
       continue()
     endif()
-    install(FILES docs/save.md docs/screens.md docs/i18n.md docs/texture_options.md docs/camera.md docs/debug.md docs/chunks.md docs/material_layers.md docs/framebuffer.md docs/render_effects.md
+    # Guides shipped with every SDK profile. Keep in sync with COMMON_GUIDES in
+    # tools/package_sdk.py, which refuses to package an SDK that is missing one.
+    install(FILES docs/save.md docs/storage.md docs/lifecycle.md docs/screens.md docs/i18n.md docs/texture_options.md docs/camera.md docs/debug.md docs/chunks.md docs/material_layers.md docs/framebuffer.md docs/render_effects.md docs/lighting.md docs/blending.md docs/anim_clips.md docs/pixel_light.md
       DESTINATION "${PIXELICA_INSTALL_SHAREDIR}/docs"
       COMPONENT ${pixelica_common_component})
     install(FILES tools/pixelica_font.py
@@ -799,6 +821,26 @@ if(PIXELICA_INSTALL)
             "-DPIXELICA_SDK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdk-check-shaders"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaShadersSdkCheck.cmake")
         set_tests_properties(sdk_installed_shaders PROPERTIES LABELS "sdk;shaders" TIMEOUT 180)
+      endif()
+      if(PIXELICA_BUILD_WATER)
+        # The installed BINARY add-on: install base + water (+ water3d) into a
+        # fresh prefix and build an external consumer against it.
+        add_test(NAME sdk_installed_water
+          COMMAND "${CMAKE_COMMAND}"
+            ${PIXELICA_SDK_CHECK_COMMON_ARGS}
+            "-DPIXELICA_SDK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdk-check-water"
+            "-DPIXELICA_WATER_HAS_3D=$<TARGET_EXISTS:pixelica_water3d>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaWaterSdkCheck.cmake")
+        set_tests_properties(sdk_installed_water PROPERTIES LABELS "sdk;water" TIMEOUT 300)
+        # The SOURCE add-on: stage the portable ZIP layout, build it against an
+        # installed base SDK that has no water in it, install the component it
+        # produces, then build the same external consumer against that.
+        add_test(NAME water_source_addon
+          COMMAND "${CMAKE_COMMAND}"
+            ${PIXELICA_SDK_CHECK_COMMON_ARGS}
+            "-DPIXELICA_SDK_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sdk-check-water-source"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PixelicaWaterSourceCheck.cmake")
+        set_tests_properties(water_source_addon PROPERTIES LABELS "sdk;water" TIMEOUT 600)
       endif()
       if(PIXELICA_BUILD_PARTICLES)
         add_test(NAME sdk_installed_particles

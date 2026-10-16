@@ -56,6 +56,29 @@ if(BUILD_TESTING)
   endif()
 endif()
 
+# Lifecycle + save storage: common library only, so it exists in every profile
+# (2D, 3D or neither) and needs no renderer, window or platform table. The
+# cross-process check below is the integration test for pixelica/app.h and
+# pixelica/storage.h: it runs this program several times against one save
+# directory and verifies what each fresh process restores.
+add_executable(hello_lifecycle hello_lifecycle/main.c)
+target_link_libraries(hello_lifecycle PRIVATE pixelica_common pixelica_options)
+set_target_properties(hello_lifecycle PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+if(BUILD_TESTING)
+  add_test(NAME smoke_hello_lifecycle
+    COMMAND hello_lifecycle --dir "${CMAKE_CURRENT_BINARY_DIR}/hello-lifecycle-smoke"
+            --steps 4 --exit shutdown --fresh)
+  set_tests_properties(smoke_hello_lifecycle PROPERTIES LABELS "smoke" TIMEOUT 30)
+  add_test(NAME lifecycle_checkpoint_restart
+    COMMAND "${CMAKE_COMMAND}"
+      "-DPIXELICA_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DPIXELICA_BINARY_DIR=${PROJECT_BINARY_DIR}"
+      "-DPIXELICA_WORK_DIR=${PROJECT_BINARY_DIR}/lifecycle-check"
+      "-DPIXELICA_LIFECYCLE_EXE=$<TARGET_FILE:hello_lifecycle>"
+      -P "${PROJECT_SOURCE_DIR}/cmake/PixelicaLifecycleCheck.cmake")
+  set_tests_properties(lifecycle_checkpoint_restart PROPERTIES LABELS "integration" TIMEOUT 300)
+endif()
+
 if(TARGET pixelica_shaders)
   add_executable(hello_shaders hello_shaders/main.c)
   target_link_libraries(hello_shaders PRIVATE pixelica_shaders pixelica_options)
@@ -63,6 +86,47 @@ if(TARGET pixelica_shaders)
   if(BUILD_TESTING)
     add_test(NAME smoke_hello_shaders COMMAND hello_shaders)
     set_tests_properties(smoke_hello_shaders PROPERTIES LABELS "shaders;smoke" TIMEOUT 30)
+  endif()
+endif()
+
+# hello_water: the raft demo of the optional water module. It owns its own
+# context and fixed-step loop (no platform, no window) so the game drives the
+# physics, and it is deliberately standalone - the same source builds inside
+# the portable source add-on (sdk/water-addon).
+if(TARGET pixelica_water3d)
+  add_executable(hello_water hello_water/hello_water.c)
+  target_link_libraries(hello_water PRIVATE pixelica_water3d pixelica_options)
+  if(MSVC)
+    # Only this translation unit uses plain fopen (C4996), as in the capture tool.
+    target_compile_definitions(hello_water PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+  set_target_properties(hello_water PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+  if(BUILD_TESTING)
+    # The program checks itself: the calm raft settles to the equilibrium
+    # draft and stays level, the waves tilt it, it never leaves the water or
+    # sinks past its probes, the drawn surface and the sampled surface agree
+    # at every corner, the three captures are distinct frames, and a
+    # physics-only replay lands on the identical state. ok=1 means all of it.
+    add_test(NAME smoke_hello_water COMMAND hello_water --frames 420)
+    set_tests_properties(smoke_hello_water PROPERTIES
+      LABELS "water;smoke" TIMEOUT 120
+      PASS_REGULAR_EXPRESSION "hello_water: ok=1")
+    # The same run a million seconds in: a float clock would have frozen the
+    # sea solid here, so this is the regression test for double time.
+    add_test(NAME smoke_hello_water_long_session
+      COMMAND hello_water --frames 300 --time-offset 1e6)
+    set_tests_properties(smoke_hello_water_long_session PROPERTIES
+      LABELS "water;smoke" TIMEOUT 120
+      PASS_REGULAR_EXPRESSION "hello_water: ok=1")
+    # Captures into a fresh directory under the build tree (never the source
+    # tree): proves --out-dir really writes the three framebuffer PPMs.
+    add_test(NAME hello_water_captures COMMAND "${CMAKE_COMMAND}"
+      "-DPIXELICA_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DPIXELICA_BINARY_DIR=${PROJECT_BINARY_DIR}"
+      "-DPIXELICA_WORK_DIR=${PROJECT_BINARY_DIR}/water-captures"
+      "-DPIXELICA_WATER_EXE=$<TARGET_FILE:hello_water>"
+      -P "${PROJECT_SOURCE_DIR}/cmake/PixelicaWaterCaptureCheck.cmake")
+    set_tests_properties(hello_water_captures PROPERTIES LABELS "water;integration" TIMEOUT 180)
   endif()
 endif()
 
@@ -166,6 +230,28 @@ if(PIXELICA_BUILD_3D)
   pixelica_add_example(hello_triangle)
   pixelica_add_example(hello_cube)
   pixelica_add_example(hello_animation)
+  # Lighting + additive blending + animation clips in one program. It needs
+  # no optional module: clips live in pixelica_common and lighting/additive
+  # blending in the 3D core.
+  pixelica_add_example(hello_lighting)
+  if(BUILD_TESTING)
+    # The 30-frame smoke run added above never reaches the clip's second
+    # event, its loop point or the crossfade. This longer headless run does,
+    # so the three features are exercised end to end, not just compiled.
+    #
+    # The expected counts follow from the clip timings: the walk clip
+    # (120 ticks, events on 0 and 60) runs for ticks 1..179 and reports
+    # LEFT, RIGHT, LOOP, LEFT; the crossfade at tick 180 restarts on the
+    # run clip (48 ticks, events on 0 and 24), which then reports LEFT,
+    # RIGHT, LOOP, LEFT, RIGHT over its 81 ticks. Totals: 4 left steps,
+    # 3 right steps, 2 loops, and a fade that completed (weight 1).
+    add_test(NAME smoke_hello_lighting_long
+      COMMAND hello_lighting --frames 260 --hidden)
+    set_tests_properties(smoke_hello_lighting_long PROPERTIES
+      LABELS "smoke" TIMEOUT 60
+      PASS_REGULAR_EXPRESSION
+        "hello_lighting: ticks=260 clip=run fade_weight=1\\.00 steps=4/3 loops=2 crossfades=1 skipped=0 lit_pixels=[1-9][0-9]+ glow_pixels=[1-9][0-9]+")
+  endif()
 
   # hello_rig combines BOTH optional modules (soft skinning + two-bone IK), so it
   # only exists when both are enabled; neither module requires the other.
@@ -226,6 +312,36 @@ if(PIXELICA_BUILD_3D)
 
     pixelica_add_pixel_room(pixel_room 256 192)
     pixelica_add_pixel_room(pixel_room_tiny 160 120)
+
+    # hello_pixel_light: the Pixel Room scene lit with the reusable light
+    # patches / contact shadows / selective bloom of pixelica/light.h. It owns
+    # its own context and PAL-less frame loop (like pixel_room_capture), so the
+    # light draws land inside the frame and the bloom composites into a
+    # caller-owned snapshot. Pixel Room itself is untouched.
+    add_executable(hello_pixel_light hello_pixel_light/hello_pixel_light.c)
+    target_link_libraries(hello_pixel_light PRIVATE pixel_room_embedded pixelica_options)
+    if(MSVC)
+      # Only this translation unit uses plain fopen (C4996), as in the capture tool.
+      target_compile_definitions(hello_pixel_light PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+    set_target_properties(hello_pixel_light PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+    if(BUILD_TESTING)
+      # Deterministic headless validation: the program itself checks that the
+      # unlit and lit frames differ, that every patch/shadow/glow draw was
+      # accepted, that the emissive mask is non-empty and that bloom only ever
+      # ADDS to the frame. It prints ok=1 only when all of that held.
+      add_test(NAME smoke_hello_pixel_light
+        COMMAND hello_pixel_light --frames 4 --effects both)
+      set_tests_properties(smoke_hello_pixel_light PROPERTIES
+        LABELS "smoke" TIMEOUT 120
+        PASS_REGULAR_EXPRESSION "hello_pixel_light: ok=1")
+      add_test(NAME smoke_hello_pixel_light_tiny
+        COMMAND hello_pixel_light --frames 2 --tiny --effects both)
+      set_tests_properties(smoke_hello_pixel_light_tiny PROPERTIES
+        LABELS "smoke" TIMEOUT 120
+        PASS_REGULAR_EXPRESSION "hello_pixel_light: ok=1")
+    endif()
 
     # The capture tool (screenshot / JSON / wall-clock benchmark) follows the root
     # PIXELICA_BUILD_BENCHMARKS option. A root that does not define it keeps the tool.

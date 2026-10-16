@@ -485,7 +485,7 @@ static void test_validation_and_memory(void)
     }
     bad[n++].wrap_u = (PIXELICA_WrapMode)2;
     bad[n++].wrap_v = (PIXELICA_WrapMode)-1;
-    bad[n++].alpha_mode = (PIXELICA_AlphaMode)3;
+    bad[n++].alpha_mode = (PIXELICA_AlphaMode)4; /* one past PIXELICA_ALPHA_ADD */
     bad[n++].alpha_mode = (PIXELICA_AlphaMode)-1;
     bad[n].texture_alpha = NULL;                  /* bytes without a plane */
     bad[n++].texture_alpha_bytes = 4;

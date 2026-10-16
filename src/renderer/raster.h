@@ -84,7 +84,8 @@ typedef struct PIXELICA_RasterCounts {
  * Every covered pixel sets its coverage bit (even if depth/alpha reject it).
  * Depth is tested before any texel is sampled. OPAQUE writes depth+color;
  * TEST discards effective alpha < cutoff before any write, else as OPAQUE;
- * BLEND skips alpha 0 and blends color without writing depth.
+ * BLEND and ADD skip alpha 0 and combine color (source-over / saturating
+ * add) without writing depth.
  * With shade->pixel the callback sees every depth-passing fragment and may
  * replace its color/alpha or discard it (no color, no depth).
  */

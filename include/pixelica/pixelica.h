@@ -35,6 +35,7 @@
 #ifndef PIXELICA_PIXELICA_H
 #define PIXELICA_PIXELICA_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -209,6 +210,115 @@ PIXELICA_Status pixelica_draw_mesh_effects(PIXELICA_Context *ctx,
                                  const PIXELICA_MaterialLayers *material,
                                  const PIXELICA_DrawOptions *options,
                                  const PIXELICA_MeshEffects *effects);
+
+/*
+ * pixelica_draw_mesh_effects with opt-in normal-based lighting
+ * (PIXELICA_Lighting in renderer.h; docs/lighting.md). `lighting` == NULL is
+ * exactly pixelica_draw_mesh_effects(ctx, mesh, model, material, options,
+ * effects), so every existing draw stays unlit and unchanged.
+ *
+ * With `lighting` the per-vertex Lambert factor modulates the fragment color
+ * (and multiplies any PIXELICA_MaterialLayers.vertex_colors factor). The
+ * mesh/model/material arrays are checked for context aliasing as with
+ * effects, and these are also rejected before any pixel, stat counter or
+ * arena byte is written (PIXELICA_ERR_INVALID_ARG): `lighting`, its normals
+ * or its light array overlapping context-owned memory; normals == NULL with
+ * vertex_count > 0; light_count > PIXELICA_MAX_DIRECTIONAL_LIGHTS or > 0
+ * with NULL lights; a light with a non-finite or all-zero direction; a model
+ * matrix whose upper-left 3x3 is singular; a non-finite or all-zero normal.
+ */
+PIXELICA_Status pixelica_draw_mesh_lit(PIXELICA_Context *ctx,
+                             const PIXELICA_Mesh *mesh,
+                             const float model[16],
+                             const PIXELICA_MaterialLayers *material,
+                             const PIXELICA_DrawOptions *options,
+                             const PIXELICA_MeshEffects *effects,
+                             const PIXELICA_Lighting *lighting);
+
+/*
+ * Draws one light patch or contact shadow (PIXELICA_LightDraw /
+ * PIXELICA_ContactShadow in renderer.h; docs/pixel_light.md). Both are
+ * pixelica_draw_mesh_effects of a single quad with the shape mask as the
+ * texture_alpha plane, so the depth, blending and validation rules are
+ * exactly the documented ones: depth-TESTED, never depth-WRITING, one
+ * accepted draw command each.
+ *
+ * `effects` is the ordinary mesh-effects descriptor and may be NULL (nearest
+ * sampling, no hook). PIXELICA_FILTER_BILINEAR smooths the mask, and a
+ * `pixel` hook sees the patch fragments (that is how
+ * pixelica_emissive_mask_pixel records a glow for bloom).
+ *
+ * Rejected before any pixel is written (PIXELICA_ERR_INVALID_ARG), in
+ * addition to every check pixelica_draw_mesh_effects already makes:
+ *   NULL ctx/descriptor; a non-finite quad vertex or UV; `mode` other than
+ *   PIXELICA_ALPHA_ADD or PIXELICA_ALPHA_BLEND; an invalid tint texture; a
+ *   mask with a NULL plane, a width/height different from the tint's, or a
+ *   stride other than its width (the alpha plane must be tightly packed);
+ *   for a contact shadow also a radius that is not finite and > 0, a
+ *   non-finite centre/normal/u_axis/bias, a zero-length normal or a u_axis
+ *   parallel to it.
+ */
+PIXELICA_Status pixelica_draw_light(PIXELICA_Context *ctx,
+                                    const PIXELICA_LightDraw *draw,
+                                    const PIXELICA_MeshEffects *effects);
+
+PIXELICA_Status pixelica_draw_contact_shadow(PIXELICA_Context *ctx,
+                                             const PIXELICA_ContactShadow *shadow,
+                                             const PIXELICA_MeshEffects *effects);
+
+/*
+ * PIXELICA_MeshEffects.pixel hook that records emissive coverage into a
+ * PIXELICA_EmissiveMask (renderer.h) for pixelica_bloom_apply. `userdata`
+ * must be the PIXELICA_EmissiveMask. It keeps the maximum alpha (and the
+ * nearest depth) of what is already there, never modifies the fragment and
+ * always returns true (the pixel is kept), so adding it to a draw cannot
+ * change the rendered image. A fragment outside the mask, alpha 0 or alpha
+ * below mask->min_alpha records nothing.
+ *
+ * PRECONDITION, because a hook cannot report an error and cannot see the
+ * draw's own buffers: per fragment it only re-checks the mask's dimensions,
+ * stride and element count (an inconsistent mask records nothing). The
+ * ADDRESS rules - the two planes not containing the descriptor, not
+ * overlapping each other, and not overlapping anything the draw reads or the
+ * context owns - are the caller's. Calling pixelica_emissive_mask_clear()
+ * once before the draw checks the first two for you; the last one cannot be
+ * checked from here at all.
+ */
+bool pixelica_emissive_mask_pixel(void *userdata, const PIXELICA_Fragment *fragment,
+                                  uint16_t *out_color, uint8_t *out_alpha);
+
+/*
+ * Zeroes the mask bytes, sets the optional depth plane to
+ * PIXELICA_DEPTH_CLEAR and resets `written`. Everything is validated before
+ * the first byte is written, so a rejected call changes nothing.
+ * PIXELICA_ERR_INVALID_ARG for NULL, a NULL alpha plane, a width/height
+ * outside 1..PIXELICA_MAX_DIMENSION, a stride < width, a plane range that
+ * would wrap the address space, a plane containing the PIXELICA_EmissiveMask
+ * that describes it, or the alpha and depth planes overlapping each other.
+ */
+PIXELICA_Status pixelica_emissive_mask_clear(PIXELICA_EmissiveMask *mask);
+
+/*
+ * Removes emitters the finished frame hides: for every recorded pixel whose
+ * stored depth is FARTHER than `frame`'s depth at the same pixel (the strict
+ * depth test the renderer used), the mask alpha becomes 0. Call it once after
+ * pixelica_end_frame() with pixelica_frame_view(ctx, &frame), before
+ * pixelica_bloom_apply(), when emissive geometry may be covered by opaque
+ * geometry drawn after it.
+ *
+ * `*out_removed` (optional) receives the number of pixels cleared; it is
+ * written once, after the pass.
+ * PIXELICA_ERR_INVALID_ARG (nothing written): NULL mask/frame, a mask without
+ * a `depth` plane, an invalid mask or frame, a frame without a depth plane, a
+ * frame whose width/height differ from the mask's, a range that would wrap
+ * the address space, or an overlap between what this call WRITES (the mask
+ * alpha plane, *out_removed) and anything it READS (the mask depth plane, the
+ * frame depth plane, the PIXELICA_EmissiveMask, the PIXELICA_FrameView) or
+ * between the two written objects themselves.
+ */
+PIXELICA_Status pixelica_emissive_mask_resolve(PIXELICA_EmissiveMask *mask,
+                                               const PIXELICA_FrameView *frame,
+                                               uint32_t *out_removed);
 
 /* Ends the frame and presents once via the PAL (if any).
  * PIXELICA_ERR_INVALID_ARG if no frame is active (present is not called);

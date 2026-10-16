@@ -23,6 +23,8 @@
 
 #include "pixelica/save.h"
 
+#include "save_internal.h"
+
 #if PIXELICA_SAVE_FILE_MAX_BYTES > 0xFFFFFFFFu || PIXELICA_SAVE_FILE_MAX_BYTES < 20u
 #error "PIXELICA_SAVE_FILE_MAX_BYTES must be in 20..0xFFFFFFFF"
 #endif
@@ -233,29 +235,28 @@ static int save_replace(const char *tmp, const char *path)
 #endif
 }
 
-PIXELICA_Status pixelica_save_file_write(const char *path, uint32_t schema_version,
-                                         const void *payload, size_t payload_size)
+/* One piece of the file to write. A zero-size piece may have a NULL pointer. */
+typedef struct SaveChunk {
+    const void *data;
+    size_t size;
+} SaveChunk;
+
+/*
+ * Streams `chunk_count` chunks into "<path>.tmp" (never truncating an existing
+ * temp file) and replaces `path` with it. Used by pixelica_save_file_write
+ * (header / payload / CRC) and by pixelica_save_raw_write (one blob), so both
+ * have exactly the same atomicity and failure behavior. `path` is assumed
+ * non-empty and the total size already checked against the file limit.
+ */
+static PIXELICA_Status save_write_atomic(const char *path, const SaveChunk *chunks,
+                                         size_t chunk_count)
 {
-    uint8_t header[PIXELICA_SAVE_HEADER_BYTES];
-    uint8_t trailer[4];
-    size_t total;
     size_t path_len;
+    size_t i;
     char *tmp;
     FILE *file;
-    uint32_t crc;
-    int ok;
-    PIXELICA_Status st;
+    int ok = 1;
 
-    if (path == NULL || path[0] == '\0' || (payload == NULL && payload_size != 0)) {
-        return PIXELICA_ERR_INVALID_ARG;
-    }
-    st = pixelica_save_encoded_size(payload_size, &total);
-    if (st != PIXELICA_OK) {
-        return st;
-    }
-    if (total > PIXELICA_SAVE_FILE_MAX_BYTES) {
-        return PIXELICA_ERR_CAPACITY; /* pixelica_save_file_read would reject it */
-    }
     path_len = strlen(path);
     if (path_len > SIZE_MAX - sizeof SAVE_TMP_SUFFIX) {
         return PIXELICA_ERR_CAPACITY;
@@ -267,22 +268,15 @@ PIXELICA_Status pixelica_save_file_write(const char *path, uint32_t schema_versi
     memcpy(tmp, path, path_len);
     memcpy(tmp + path_len, SAVE_TMP_SUFFIX, sizeof SAVE_TMP_SUFFIX);
 
-    save_put_header(header, schema_version, (uint32_t)payload_size);
-    crc = save_crc_update(SAVE_CRC_INIT, header, sizeof header);
-    crc = save_crc_update(crc, payload, payload_size);
-    save_wr32(trailer, crc ^ SAVE_CRC_INIT);
-
     file = fopen(tmp, "wbx"); /* never truncate an existing temp file or link */
     if (file == NULL) {
         free(tmp);
         return PIXELICA_ERR_PLATFORM;
     }
-    ok = fwrite(header, 1, sizeof header, file) == sizeof header;
-    if (ok && payload_size != 0) {
-        ok = fwrite(payload, 1, payload_size, file) == payload_size;
-    }
-    if (ok) {
-        ok = fwrite(trailer, 1, sizeof trailer, file) == sizeof trailer;
+    for (i = 0; ok && i < chunk_count; ++i) {
+        if (chunks[i].size != 0) {
+            ok = fwrite(chunks[i].data, 1, chunks[i].size, file) == chunks[i].size;
+        }
     }
     if (ok) {
         ok = fflush(file) == 0;
@@ -298,6 +292,109 @@ PIXELICA_Status pixelica_save_file_write(const char *path, uint32_t schema_versi
     }
     free(tmp);
     return ok ? PIXELICA_OK : PIXELICA_ERR_PLATFORM;
+}
+
+PIXELICA_Status pixelica_save_file_write(const char *path, uint32_t schema_version,
+                                         const void *payload, size_t payload_size)
+{
+    uint8_t header[PIXELICA_SAVE_HEADER_BYTES];
+    uint8_t trailer[4];
+    SaveChunk chunks[3];
+    size_t total;
+    uint32_t crc;
+    PIXELICA_Status st;
+
+    if (path == NULL || path[0] == '\0' || (payload == NULL && payload_size != 0)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    st = pixelica_save_encoded_size(payload_size, &total);
+    if (st != PIXELICA_OK) {
+        return st;
+    }
+    if (total > PIXELICA_SAVE_FILE_MAX_BYTES) {
+        return PIXELICA_ERR_CAPACITY; /* pixelica_save_file_read would reject it */
+    }
+
+    save_put_header(header, schema_version, (uint32_t)payload_size);
+    crc = save_crc_update(SAVE_CRC_INIT, header, sizeof header);
+    crc = save_crc_update(crc, payload, payload_size);
+    save_wr32(trailer, crc ^ SAVE_CRC_INIT);
+
+    chunks[0].data = header;
+    chunks[0].size = sizeof header;
+    chunks[1].data = payload;
+    chunks[1].size = payload_size;
+    chunks[2].data = trailer;
+    chunks[2].size = sizeof trailer;
+    return save_write_atomic(path, chunks, 3u);
+}
+
+PIXELICA_Status pixelica_save_raw_write(const char *path, const void *data, size_t size)
+{
+    SaveChunk chunk;
+
+    if (path == NULL || path[0] == '\0' || (data == NULL && size != 0)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    if (size > PIXELICA_SAVE_FILE_MAX_BYTES) {
+        return PIXELICA_ERR_CAPACITY;
+    }
+    chunk.data = data;
+    chunk.size = size;
+    return save_write_atomic(path, &chunk, 1u);
+}
+
+PIXELICA_Status pixelica_save_raw_read(const char *path, void *out, size_t capacity,
+                                       size_t *out_size)
+{
+    FILE *file;
+    long end;
+    size_t total;
+    PIXELICA_Status st = PIXELICA_OK;
+
+    if (path == NULL || path[0] == '\0' || out_size == NULL ||
+        (out == NULL && capacity != 0)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    errno = 0;
+    file = fopen(path, "rb");
+    if (file == NULL) {
+#ifdef ENOENT
+        if (errno == ENOENT) {
+            return PIXELICA_ERR_NOT_FOUND;
+        }
+#endif
+        return PIXELICA_ERR_PLATFORM;
+    }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        st = PIXELICA_ERR_PLATFORM;
+        end = 0;
+    } else {
+        end = ftell(file);
+        if (end < 0) {
+            st = PIXELICA_ERR_PLATFORM;
+            end = 0;
+        }
+    }
+    total = (size_t)end;
+    if (st == PIXELICA_OK && (uint64_t)total > (uint64_t)PIXELICA_SAVE_FILE_MAX_BYTES) {
+        st = PIXELICA_ERR_CAPACITY;
+    }
+    if (st == PIXELICA_OK) {
+        /* Report the size before the capacity check so a caller can grow. */
+        *out_size = total;
+        if (total > capacity) {
+            st = PIXELICA_ERR_NO_MEMORY;
+        } else if (fseek(file, 0, SEEK_SET) != 0) {
+            st = PIXELICA_ERR_PLATFORM;
+        } else if (total != 0 && fread(out, 1, total, file) != total) {
+            st = PIXELICA_ERR_PLATFORM;
+        }
+    }
+    if (fclose(file) != 0 && st == PIXELICA_OK) {
+        st = PIXELICA_ERR_PLATFORM;
+    }
+    return st;
 }
 
 PIXELICA_Status pixelica_save_file_read(const char *path, uint32_t *out_schema_version,

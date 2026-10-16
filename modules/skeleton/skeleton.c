@@ -206,11 +206,21 @@ PIXELICA_Status pixelica_skeleton_pose(const PIXELICA_Skeleton *skeleton,
     return PIXELICA_OK;
 }
 
-PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
-                            const PIXELICA_SkinWeight *weights, size_t vertex_count,
-                            const float (*palette)[16], uint32_t bone_count,
-                            PIXELICA_Vec3 *out_positions,
-                            PIXELICA_Vec3 *scratch, size_t scratch_vertices)
+/*
+ * Shared front half of both skinning entry points: pointers and counts,
+ * extent sizes, workspace size, address ranges and the affine palette. On
+ * PIXELICA_OK *out_vertex_bytes holds vertex_count * sizeof(PIXELICA_Vec3).
+ * No caller memory has been written when it returns.
+ */
+static PIXELICA_Status pixelica_skin_check(const PIXELICA_Vec3 *bind,
+                                      const PIXELICA_SkinWeight *weights,
+                                      size_t vertex_count,
+                                      const float (*palette)[16],
+                                      uint32_t bone_count,
+                                      const PIXELICA_Vec3 *out,
+                                      const PIXELICA_Vec3 *scratch,
+                                      size_t scratch_vertices,
+                                      size_t *out_vertex_bytes)
 {
     size_t vertex_bytes;
     size_t weight_bytes;
@@ -220,13 +230,11 @@ PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
     PIXELICA_Range r_palette;
     PIXELICA_Range r_out;
     PIXELICA_Range r_scratch;
-    size_t v;
     uint32_t j;
-    unsigned k;
 
-    if (bind_positions == NULL || weights == NULL || palette == NULL ||
-        out_positions == NULL || scratch == NULL || vertex_count == 0 ||
-        bone_count == 0 || bone_count > PIXELICA_SKELETON_MAX_BONES) {
+    if (bind == NULL || weights == NULL || palette == NULL || out == NULL ||
+        scratch == NULL || vertex_count == 0 || bone_count == 0 ||
+        bone_count > PIXELICA_SKELETON_MAX_BONES) {
         return PIXELICA_ERR_INVALID_ARG;
     }
     if (!pixelica_size_mul(vertex_count, sizeof(PIXELICA_Vec3), &vertex_bytes) ||
@@ -239,10 +247,10 @@ PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
         return PIXELICA_ERR_NO_MEMORY;
     }
 
-    if (!pixelica_range_make(bind_positions, vertex_bytes, &r_bind) ||
+    if (!pixelica_range_make(bind, vertex_bytes, &r_bind) ||
         !pixelica_range_make(weights, weight_bytes, &r_weights) ||
         !pixelica_range_make(palette, palette_bytes, &r_palette) ||
-        !pixelica_range_make(out_positions, vertex_bytes, &r_out) ||
+        !pixelica_range_make(out, vertex_bytes, &r_out) ||
         !pixelica_range_make(scratch, vertex_bytes, &r_scratch)) {
         return PIXELICA_ERR_INVALID_ARG;
     }
@@ -265,13 +273,62 @@ PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
             return PIXELICA_ERR_INVALID_ARG;
         }
     }
+    *out_vertex_bytes = vertex_bytes;
+    return PIXELICA_OK;
+}
+
+/* Validates one weight record against bone_count and returns its weight sum
+ * in *out_sum (see PIXELICA_SkinWeight). */
+static PIXELICA_Status pixelica_skin_weight_sum(const PIXELICA_SkinWeight *sw,
+                                           uint32_t bone_count, double *out_sum)
+{
+    double sum = 0.0;
+    unsigned k;
+
+    for (k = 0; k < PIXELICA_SKIN_INFLUENCES; ++k) {
+        float w = sw->weights[k];
+        /* Also rejects NaN and infinities. */
+        if (!(w >= 0.0f && w <= 1.0f)) {
+            return PIXELICA_ERR_INVALID_ARG;
+        }
+        if (w > 0.0f) {
+            if ((uint32_t)sw->bones[k] >= bone_count) {
+                return PIXELICA_ERR_INVALID_ARG;
+            }
+            sum += (double)w;
+        }
+    }
+    if (!(sum > 0.0) || fabs(sum - 1.0) > PIXELICA_SKIN_WEIGHT_TOLERANCE) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    *out_sum = sum;
+    return PIXELICA_OK;
+}
+
+PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
+                            const PIXELICA_SkinWeight *weights, size_t vertex_count,
+                            const float (*palette)[16], uint32_t bone_count,
+                            PIXELICA_Vec3 *out_positions,
+                            PIXELICA_Vec3 *scratch, size_t scratch_vertices)
+{
+    size_t vertex_bytes;
+    PIXELICA_Status st;
+    size_t v;
+    unsigned k;
+
+    st = pixelica_skin_check(bind_positions, weights, vertex_count, palette,
+                             bone_count, out_positions, scratch,
+                             scratch_vertices, &vertex_bytes);
+    if (st != PIXELICA_OK) {
+        return st;
+    }
 
     /* One pass validates and skins each vertex into scratch; a failure may
      * leave scratch partly written but never reaches out_positions. */
     for (v = 0; v < vertex_count; ++v) {
         const PIXELICA_SkinWeight *sw = &weights[v];
         PIXELICA_Vec3 p = bind_positions[v];
-        double sum = 0.0;
+        double sum;
         double anchor[3];
         double acc[3];
         int have_anchor = 0;
@@ -280,21 +337,9 @@ PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
         if (!isfinite(p.x) || !isfinite(p.y) || !isfinite(p.z)) {
             return PIXELICA_ERR_INVALID_ARG;
         }
-        for (k = 0; k < PIXELICA_SKIN_INFLUENCES; ++k) {
-            float w = sw->weights[k];
-            /* Also rejects NaN and infinities. */
-            if (!(w >= 0.0f && w <= 1.0f)) {
-                return PIXELICA_ERR_INVALID_ARG;
-            }
-            if (w > 0.0f) {
-                if ((uint32_t)sw->bones[k] >= bone_count) {
-                    return PIXELICA_ERR_INVALID_ARG;
-                }
-                sum += (double)w;
-            }
-        }
-        if (!(sum > 0.0) || fabs(sum - 1.0) > PIXELICA_SKIN_WEIGHT_TOLERANCE) {
-            return PIXELICA_ERR_INVALID_ARG;
+        st = pixelica_skin_weight_sum(sw, bone_count, &sum);
+        if (st != PIXELICA_OK) {
+            return st;
         }
 
         /*
@@ -345,5 +390,126 @@ PIXELICA_Status pixelica_skeleton_skin(const PIXELICA_Vec3 *bind_positions,
 
     /* Every read of bind_positions is done, so in-place skinning is safe. */
     memcpy(out_positions, scratch, vertex_bytes);
+    return PIXELICA_OK;
+}
+
+PIXELICA_Status pixelica_skeleton_normal_palette(const float (*palette)[16],
+                                      uint32_t bone_count,
+                                      float (*out_normal_palette)[16],
+                                      float (*scratch)[16],
+                                      size_t scratch_matrices)
+{
+    size_t palette_bytes;
+    size_t scratch_bytes;
+    PIXELICA_Range r_palette;
+    PIXELICA_Range r_out;
+    PIXELICA_Range r_scratch;
+    uint32_t j;
+
+    if (palette == NULL || out_normal_palette == NULL || scratch == NULL ||
+        bone_count == 0 || bone_count > PIXELICA_SKELETON_MAX_BONES) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    if (!pixelica_size_mul((size_t)bone_count, sizeof palette[0],
+                           &palette_bytes) ||
+        !pixelica_size_mul((size_t)bone_count, sizeof scratch[0],
+                           &scratch_bytes)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    if (scratch_matrices < (size_t)bone_count) {
+        return PIXELICA_ERR_NO_MEMORY;
+    }
+    if (!pixelica_range_make(palette, palette_bytes, &r_palette) ||
+        !pixelica_range_make(out_normal_palette, palette_bytes, &r_out) ||
+        !pixelica_range_make(scratch, scratch_bytes, &r_scratch)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    if (pixelica_range_overlap(r_out, r_palette) ||
+        pixelica_range_overlap(r_scratch, r_palette) ||
+        pixelica_range_overlap(r_scratch, r_out)) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+
+    for (j = 0; j < bone_count; ++j) {
+        if (!pixelica_affine_valid(palette[j]) ||
+            pixelica_mat4_normal_matrix(scratch[j], palette[j]) != PIXELICA_OK) {
+            return PIXELICA_ERR_INVALID_ARG;
+        }
+    }
+    memcpy(out_normal_palette, scratch, palette_bytes);
+    return PIXELICA_OK;
+}
+
+PIXELICA_Status pixelica_skeleton_skin_normals(const PIXELICA_Vec3 *bind_normals,
+                            const PIXELICA_SkinWeight *weights, size_t vertex_count,
+                            const float (*normal_palette)[16], uint32_t bone_count,
+                            PIXELICA_Vec3 *out_normals,
+                            PIXELICA_Vec3 *scratch, size_t scratch_vertices)
+{
+    size_t vertex_bytes;
+    PIXELICA_Status st;
+    size_t v;
+    unsigned k;
+
+    st = pixelica_skin_check(bind_normals, weights, vertex_count,
+                             normal_palette, bone_count, out_normals, scratch,
+                             scratch_vertices, &vertex_bytes);
+    if (st != PIXELICA_OK) {
+        return st;
+    }
+
+    for (v = 0; v < vertex_count; ++v) {
+        const PIXELICA_SkinWeight *sw = &weights[v];
+        PIXELICA_Vec3 n = bind_normals[v];
+        double sum;
+        double acc[3];
+        double len2;
+        double inv_len;
+        int c;
+
+        if (!isfinite(n.x) || !isfinite(n.y) || !isfinite(n.z) ||
+            (n.x == 0.0f && n.y == 0.0f && n.z == 0.0f)) {
+            return PIXELICA_ERR_INVALID_ARG;
+        }
+        st = pixelica_skin_weight_sum(sw, bone_count, &sum);
+        if (st != PIXELICA_OK) {
+            return st;
+        }
+
+        /* A direction ignores the translation column: only the 3x3 acts. */
+        acc[0] = acc[1] = acc[2] = 0.0;
+        for (k = 0; k < PIXELICA_SKIN_INFLUENCES; ++k) {
+            const float *m;
+            double w = (double)sw->weights[k];
+
+            if (!(w > 0.0)) {
+                continue;
+            }
+            m = normal_palette[sw->bones[k]];
+            w /= sum;
+            for (c = 0; c < 3; ++c) {
+                acc[c] += w * ((double)m[0 + c] * (double)n.x +
+                               (double)m[4 + c] * (double)n.y +
+                               (double)m[8 + c] * (double)n.z);
+            }
+        }
+        len2 = acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2];
+        if (!(len2 > 0.0) || !isfinite(len2)) {
+            return PIXELICA_ERR_INVALID_ARG; /* influences cancelled out */
+        }
+        inv_len = 1.0 / sqrt(len2);
+        for (c = 0; c < 3; ++c) {
+            acc[c] *= inv_len;
+            if (!(fabs(acc[c]) <= (double)FLT_MAX)) {
+                return PIXELICA_ERR_INVALID_ARG;
+            }
+        }
+        scratch[v].x = (float)acc[0];
+        scratch[v].y = (float)acc[1];
+        scratch[v].z = (float)acc[2];
+    }
+
+    /* Every read of bind_normals is done, so in-place skinning is safe. */
+    memcpy(out_normals, scratch, vertex_bytes);
     return PIXELICA_OK;
 }

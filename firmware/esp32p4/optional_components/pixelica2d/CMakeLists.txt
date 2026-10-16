@@ -1,8 +1,8 @@
 # OPTIONAL, STANDALONE ESP-IDF component "pixelica2d": the Pixelica2D engine without
 # any 3D code. It contains
-#   - the 5 common sources  (math, input, animation, asset container, texture
-#     loader: src/math/mat4.c, src/input/input.c, src/animation/animation.c,
-#     src/assets/container.c, src/assets/texture_asset.c), and
+#   - the common sources (math incl. quaternions, input, animation and clips,
+#     game lifecycle/storage, asset container, texture loader). The list is read
+#     from cmake/PixelicaSources.cmake below, never duplicated here, and
 #   - the 2D renderer sources of modules/renderer2d.
 # It does NOT depend on, include or compile anything of the "pixelica" component
 # (no context, scene, rasterizer, mesh/cart loader, no pixelica.h) and it ships NO
@@ -14,7 +14,7 @@
 #   ... and list `pixelica2d` in your component's REQUIRES.
 #
 # NEVER register this component together with the legacy "pixelica" component
-# (components/pixelica) in one project: both would compile the same 5 common
+# (components/pixelica) in one project: both would compile the same common
 # sources and the link would see duplicate symbols. The legacy firmware project
 # (firmware/esp32p4/CMakeLists.txt) therefore never adds this directory; it adds
 # optional_components/pixelica_renderer2d (REQUIRES pixelica) for its 2D option

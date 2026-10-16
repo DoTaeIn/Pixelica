@@ -2,10 +2,12 @@
 # ESP32-P4 platform (platforms/esp32p4/). The sources stay where they are in the
 # repository; this wrapper only points at them.
 #
-# The 12 source files are the host build's 5 common files (pixelica_common) PLUS its 7
+# The source list below is the host build's common files (pixelica_common) PLUS its
 # 3D-renderer files (pixelica_core), compiled into this one component so the original
-# firmware keeps working unchanged. Do NOT register the standalone 2D component
-# (optional_components/pixelica2d) in the same project: it compiles the same 5 common
+# firmware keeps working unchanged. The authoritative lists live in
+# cmake/PixelicaSources.cmake and the cross-check further down fails the configure
+# step if the two ever disagree. Do NOT register the standalone 2D component
+# (optional_components/pixelica2d) in the same project: it compiles the same common
 # files again. A 2D renderer next to this component is optional_components/
 # pixelica_renderer2d (REQUIRES pixelica), enabled with -DPIXELICA_BUILD_2D=ON.
 #
@@ -40,13 +42,17 @@ endif()
 # of the firmware.
 set(PIXELICA_CORE_SOURCE_NAMES
   animation/animation.c
+  animation/anim_clip.c
   assets/cart.c
   assets/container.c
   assets/mesh_asset.c
   assets/texture_asset.c
   core/context.c
   core/framebuffer.c
+  game/app.c
   game/save.c
+  game/storage.c
+  game/storage_fs.c
   game/screens.c
   game/i18n.c
   game/camera.c
@@ -55,7 +61,11 @@ set(PIXELICA_CORE_SOURCE_NAMES
   game/framebuffer.c
   game/collision2d.c
   input/input.c
+  light/bloom.c
+  light/light_mask.c
   math/mat4.c
+  math/quat.c
+  renderer/light_draw.c
   renderer/pipeline.c
   renderer/rasterizer.c
   scene/aabb.c
@@ -80,8 +90,8 @@ foreach(pixelica_name IN LISTS pixelica_found_sources)
   endif()
 endforeach()
 
-# Cross-check with the host build's explicit lists (cmake/PixelicaSources.cmake: 5
-# common + 7 3D-renderer files): both must name exactly the same 12 files, so the
+# Cross-check with the host build's explicit lists (cmake/PixelicaSources.cmake:
+# common + 3D-renderer files): both must name exactly the same files, so the
 # firmware and the host libraries cannot silently disagree.
 if(NOT EXISTS "${PIXELICA_ROOT}/cmake/PixelicaSources.cmake")
   message(FATAL_ERROR "pixelica component: ${PIXELICA_ROOT}/cmake/PixelicaSources.cmake is missing")
@@ -122,7 +132,7 @@ idf_component_register(
 
 # Nothing below runs in script mode (idf_component_register() returned above).
 #
-# The standalone 2D component compiles the same 5 common sources: refuse the mix.
+# The standalone 2D component compiles the same common sources: refuse the mix.
 idf_build_get_property(pixelica_build_components BUILD_COMPONENTS)
 if("pixelica2d" IN_LIST pixelica_build_components)
   message(FATAL_ERROR

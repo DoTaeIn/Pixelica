@@ -72,9 +72,19 @@ TOOLSET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.,=+-]{0,63}$")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 VERSION_RE = re.compile(r"project\s*\(\s*Pixelica\s+VERSION\s+(\d+\.\d+\.\d+)", re.IGNORECASE)
 
-COMMON_HEADERS = ("status.h", "input.h", "platform.h", "math.h", "animation.h",
-                  "image.h", "draw_options.h", "assets_common.h", "save.h", "screens.h", "i18n.h", "camera.h", "debug.h", "chunks.h", "framebuffer.h", "collision2d.h")
+COMMON_HEADERS = ("status.h", "input.h", "platform.h", "math.h", "animation.h", "anim_clip.h",
+                  "image.h", "draw_options.h", "assets_common.h", "save.h", "storage.h", "app.h", "screens.h", "i18n.h", "camera.h", "debug.h", "chunks.h", "framebuffer.h", "light.h", "collision2d.h")
 HEADERS_3D = ("pixelica.h", "renderer.h", "assets.h", "scene.h")
+
+# Reference guides installed under share/Pixelica/docs/ by every SDK profile
+# (the `common` and `core` install components). Keep in sync with the
+# install(FILES docs/...) list in CMakeLists.txt; check_variant_files() below
+# refuses to package an SDK that is missing any of them.
+COMMON_GUIDES = ("save.md", "storage.md", "lifecycle.md", "screens.md", "i18n.md",
+                 "texture_options.md", "camera.md", "debug.md", "chunks.md",
+                 "material_layers.md", "framebuffer.md", "render_effects.md",
+                 "lighting.md", "blending.md", "anim_clips.md", "pixel_light.md")
+
 CMAKE_DIR_3D = "cmake/Pixelica"  # below the library directory (lib, lib64, ...)
 CMAKE_DIR_2D = "cmake/Pixelica2D"
 CMAKE_DIR_UI = "cmake/PixelicaUI"
@@ -333,6 +343,7 @@ def configure_options(single_config: Optional[str]) -> List[str]:
         "-DPIXELICA_BUILD_AUDIO=OFF",
         "-DPIXELICA_BUILD_PARTICLES=OFF",
         "-DPIXELICA_BUILD_SHADERS=OFF",
+        "-DPIXELICA_BUILD_WATER=OFF",
         "-DPIXELICA_INSTALL=ON",
         "-DPIXELICA_SANITIZE=OFF",
         "-DPIXELICA_WARNINGS_AS_ERRORS=ON",
@@ -501,7 +512,7 @@ def check_variant_files(variant: str, files: Iterable[str], configs: Sequence[st
     need("share/Pixelica/docs/ui.md")
     need("share/Pixelica/examples/hello_ui/CMakeLists.txt")
     need("share/Pixelica/examples/hello_ui/main.c")
-    for guide in ("save.md", "screens.md", "i18n.md", "texture_options.md", "camera.md", "debug.md", "chunks.md", "material_layers.md", "framebuffer.md", "render_effects.md"):
+    for guide in COMMON_GUIDES:
         need("share/Pixelica/docs/" + guide)
     need("share/Pixelica/tools/pixelica_font.py")
 

@@ -418,6 +418,289 @@ static void test_null_and_finite(void)
     CHECK(pixelica_mat4_is_finite(NULL) == 0);
 }
 
+/* ---- normal matrix (inverse transpose of the upper-left 3x3) ---------- */
+
+/* out = a * b restricted to the 3x3 block, row-major result. */
+static void mul3(double out[3][3], const float a[16], const float b[16])
+{
+    int r, c, k;
+
+    for (r = 0; r < 3; ++r) {
+        for (c = 0; c < 3; ++c) {
+            double s = 0.0;
+            for (k = 0; k < 3; ++k) {
+                s += (double)a[k * 4 + r] * (double)b[c * 4 + k];
+            }
+            out[r][c] = s;
+        }
+    }
+}
+
+static void test_normal_matrix(void)
+{
+    float m[16];
+    float n[16];
+    float keep[16];
+    double p[3][3];
+    int i;
+
+    /* A rotation is orthonormal: its inverse transpose is itself. */
+    pixelica_mat4_rotation_y(m, 0.7f);
+    CHECK(pixelica_mat4_normal_matrix(n, m) == PIXELICA_OK);
+    for (i = 0; i < 16; ++i) {
+        CHECK_NEAR(n[i], m[i], 1e-5);
+    }
+
+    /* Translation is ignored: only the 3x3 block matters. */
+    m[12] = 9.0f;
+    m[13] = -3.0f;
+    m[14] = 4.0f;
+    CHECK(pixelica_mat4_normal_matrix(n, m) == PIXELICA_OK);
+    CHECK_NEAR(n[12], 0.0, 0.0);
+    CHECK_NEAR(n[13], 0.0, 0.0);
+    CHECK_NEAR(n[14], 0.0, 0.0);
+    CHECK(n[15] == 1.0f && n[3] == 0.0f && n[7] == 0.0f && n[11] == 0.0f);
+
+    /* Non-uniform scale: the normal matrix holds the RECIPROCAL scales, and
+     * M^T * N is the identity by construction. */
+    pixelica_mat4_scale(m, 2.0f, 4.0f, 0.5f);
+    CHECK(pixelica_mat4_normal_matrix(n, m) == PIXELICA_OK);
+    CHECK_NEAR(n[0], 0.5, 1e-6);
+    CHECK_NEAR(n[5], 0.25, 1e-6);
+    CHECK_NEAR(n[10], 2.0, 1e-6);
+
+    /* A sheared, scaled, rotated matrix: transpose(M) * N == I exactly
+     * characterizes the inverse transpose. */
+    pixelica_mat4_identity(m);
+    m[0] = 2.0f;
+    m[4] = 0.5f;  /* shear x by y */
+    m[5] = 3.0f;
+    m[9] = -0.25f;
+    m[10] = 1.5f;
+    m[2] = 0.75f;
+    CHECK(pixelica_mat4_normal_matrix(n, m) == PIXELICA_OK);
+    {
+        float mt[16];
+        int r, c;
+
+        pixelica_mat4_identity(mt);
+        for (r = 0; r < 3; ++r) {
+            for (c = 0; c < 3; ++c) {
+                mt[c * 4 + r] = m[r * 4 + c]; /* transpose of the 3x3 */
+            }
+        }
+        mul3(p, mt, n);
+        for (r = 0; r < 3; ++r) {
+            for (c = 0; c < 3; ++c) {
+                CHECK_NEAR(p[r][c], r == c ? 1.0 : 0.0, 1e-6);
+            }
+        }
+    }
+
+    /* A normal stays perpendicular: for the surface tangent t and normal n0
+     * with dot(n0, t) == 0, dot(N*n0, M*t) == 0 too. */
+    {
+        const PIXELICA_Vec3 t0 = {1.0f, 0.0f, 0.0f};
+        const PIXELICA_Vec3 n0 = {0.0f, 1.0f, 0.0f};
+        float mt[4], nn[4];
+        double d;
+
+        pixelica_mat4_transform_point(mt, m, t0);
+        pixelica_mat4_transform_point(nn, n, n0);
+        /* Directions: subtract the translation columns (both are zero here
+         * for n, and m has none either). */
+        d = (double)mt[0] * nn[0] + (double)mt[1] * nn[1] + (double)mt[2] * nn[2];
+        CHECK_NEAR(d, 0.0, 1e-5);
+        /* The naive "transform the normal with M" would NOT be perpendicular. */
+        pixelica_mat4_transform_point(nn, m, n0);
+        d = (double)mt[0] * nn[0] + (double)mt[1] * nn[1] + (double)mt[2] * nn[2];
+        CHECK(fabs(d) > 0.1);
+    }
+
+    /* Mirroring (negative determinant) flips the normals. */
+    pixelica_mat4_scale(m, -1.0f, 1.0f, 1.0f);
+    CHECK(pixelica_mat4_normal_matrix(n, m) == PIXELICA_OK);
+    CHECK_NEAR(n[0], -1.0, 0.0);
+    CHECK_NEAR(n[5], 1.0, 0.0);
+
+    /* Invalid input leaves `out` untouched. */
+    for (i = 0; i < 16; ++i) {
+        n[i] = 7.5f;
+        keep[i] = 7.5f;
+    }
+    pixelica_mat4_scale(m, 1.0f, 0.0f, 1.0f); /* singular */
+    CHECK(pixelica_mat4_normal_matrix(n, m) == PIXELICA_ERR_INVALID_ARG);
+    pixelica_mat4_identity(m);
+    m[5] = pixelica_t_nan();
+    CHECK(pixelica_mat4_normal_matrix(n, m) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(pixelica_mat4_normal_matrix(n, NULL) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(pixelica_mat4_normal_matrix(NULL, m) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(memcmp(n, keep, sizeof n) == 0);
+}
+
+/* ---- quaternions ------------------------------------------------------- */
+
+static double quat_dot(PIXELICA_Quat a, PIXELICA_Quat b)
+{
+    return (double)a.x * b.x + (double)a.y * b.y + (double)a.z * b.z +
+           (double)a.w * b.w;
+}
+
+static void test_quat_basics(void)
+{
+    const PIXELICA_Vec3 zaxis = {0.0f, 0.0f, 1.0f};
+    const PIXELICA_Vec3 zero = {0.0f, 0.0f, 0.0f};
+    PIXELICA_Quat q, keep;
+    float m[16], r[16];
+    int i;
+
+    pixelica_quat_identity(&q);
+    CHECK(q.x == 0.0f && q.y == 0.0f && q.z == 0.0f && q.w == 1.0f);
+    pixelica_quat_identity(NULL); /* no crash */
+
+    /* An identity quaternion is the identity matrix. */
+    CHECK(pixelica_quat_to_mat4(m, q) == PIXELICA_OK);
+    pixelica_mat4_identity(r);
+    for (i = 0; i < 16; ++i) {
+        CHECK_NEAR(m[i], r[i], 0.0);
+    }
+
+    /* A quaternion rotation matches pixelica_mat4_rotation_z elementwise,
+     * which fixes the sign/handedness convention. */
+    CHECK(pixelica_quat_from_axis_angle(&q, zaxis, 0.9f) == PIXELICA_OK);
+    CHECK(pixelica_quat_to_mat4(m, q) == PIXELICA_OK);
+    pixelica_mat4_rotation_z(r, 0.9f);
+    for (i = 0; i < 16; ++i) {
+        CHECK_NEAR(m[i], r[i], 1e-5);
+    }
+    {
+        const PIXELICA_Vec3 xaxis = {1.0f, 0.0f, 0.0f};
+        const PIXELICA_Vec3 yaxis = {0.0f, 1.0f, 0.0f};
+
+        CHECK(pixelica_quat_from_axis_angle(&q, xaxis, -0.4f) == PIXELICA_OK);
+        CHECK(pixelica_quat_to_mat4(m, q) == PIXELICA_OK);
+        pixelica_mat4_rotation_x(r, -0.4f);
+        for (i = 0; i < 16; ++i) {
+            CHECK_NEAR(m[i], r[i], 1e-5);
+        }
+        CHECK(pixelica_quat_from_axis_angle(&q, yaxis, 2.3f) == PIXELICA_OK);
+        CHECK(pixelica_quat_to_mat4(m, q) == PIXELICA_OK);
+        pixelica_mat4_rotation_y(r, 2.3f);
+        for (i = 0; i < 16; ++i) {
+            CHECK_NEAR(m[i], r[i], 1e-5);
+        }
+    }
+
+    /* A non-unit axis/quaternion is normalized, not rejected. */
+    {
+        const PIXELICA_Vec3 longz = {0.0f, 0.0f, 12.5f};
+        PIXELICA_Quat big;
+
+        CHECK(pixelica_quat_from_axis_angle(&big, longz, 0.9f) == PIXELICA_OK);
+        CHECK(pixelica_quat_from_axis_angle(&q, zaxis, 0.9f) == PIXELICA_OK);
+        CHECK_NEAR(quat_dot(big, q), 1.0, 1e-6);
+        big.x *= 7.0f;
+        big.y *= 7.0f;
+        big.z *= 7.0f;
+        big.w *= 7.0f;
+        CHECK(pixelica_quat_normalize(&big, big) == PIXELICA_OK);
+        CHECK_NEAR(quat_dot(big, q), 1.0, 1e-6);
+        CHECK(pixelica_quat_to_mat4(m, big) == PIXELICA_OK);
+    }
+
+    /* Invalid input leaves the output untouched. */
+    keep.x = keep.y = keep.z = keep.w = 3.5f;
+    q = keep;
+    CHECK(pixelica_quat_normalize(&q, keep) == PIXELICA_OK); /* finite non-zero */
+    q = keep;
+    {
+        PIXELICA_Quat bad = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        CHECK(pixelica_quat_normalize(&q, bad) == PIXELICA_ERR_INVALID_ARG);
+        CHECK(pixelica_quat_to_mat4(m, bad) == PIXELICA_ERR_INVALID_ARG);
+        bad.w = pixelica_t_nan();
+        CHECK(pixelica_quat_normalize(&q, bad) == PIXELICA_ERR_INVALID_ARG);
+        CHECK(q.x == keep.x && q.w == keep.w);
+    }
+    CHECK(pixelica_quat_from_axis_angle(&q, zero, 1.0f) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(pixelica_quat_from_axis_angle(&q, zaxis, pixelica_t_inf()) ==
+          PIXELICA_ERR_INVALID_ARG);
+    CHECK(pixelica_quat_from_axis_angle(NULL, zaxis, 1.0f) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(q.x == keep.x && q.w == keep.w);
+}
+
+static void test_quat_slerp(void)
+{
+    const PIXELICA_Vec3 zaxis = {0.0f, 0.0f, 1.0f};
+    PIXELICA_Quat a, b, mid, expect, got;
+
+    CHECK(pixelica_quat_from_axis_angle(&a, zaxis, 0.0f) == PIXELICA_OK);
+    CHECK(pixelica_quat_from_axis_angle(&b, zaxis, 1.2f) == PIXELICA_OK);
+    CHECK(pixelica_quat_from_axis_angle(&expect, zaxis, 0.6f) == PIXELICA_OK);
+
+    /* Endpoints are exact (up to normalization). */
+    CHECK(pixelica_quat_slerp(&got, a, b, 0.0f) == PIXELICA_OK);
+    CHECK_NEAR(fabs(quat_dot(got, a)), 1.0, 1e-6);
+    CHECK(pixelica_quat_slerp(&got, a, b, 1.0f) == PIXELICA_OK);
+    CHECK_NEAR(fabs(quat_dot(got, b)), 1.0, 1e-6);
+
+    /* The halfway point is the half angle, and t is clamped. */
+    CHECK(pixelica_quat_slerp(&mid, a, b, 0.5f) == PIXELICA_OK);
+    CHECK_NEAR(fabs(quat_dot(mid, expect)), 1.0, 1e-6);
+    CHECK(pixelica_quat_slerp(&got, a, b, -5.0f) == PIXELICA_OK);
+    CHECK_NEAR(fabs(quat_dot(got, a)), 1.0, 1e-6);
+    CHECK(pixelica_quat_slerp(&got, a, b, 7.0f) == PIXELICA_OK);
+    CHECK_NEAR(fabs(quat_dot(got, b)), 1.0, 1e-6);
+
+    /* Results are unit length. */
+    CHECK_NEAR(quat_dot(mid, mid), 1.0, 1e-6);
+
+    /* Shortest arc: -b is the same rotation, so slerping to it must give the
+     * same halfway rotation, not the long way round. */
+    {
+        PIXELICA_Quat nb = b;
+        PIXELICA_Quat mid2;
+
+        nb.x = -nb.x;
+        nb.y = -nb.y;
+        nb.z = -nb.z;
+        nb.w = -nb.w;
+        CHECK(pixelica_quat_slerp(&mid2, a, nb, 0.5f) == PIXELICA_OK);
+        CHECK_NEAR(fabs(quat_dot(mid2, mid)), 1.0, 1e-6);
+    }
+
+    /* Nearly identical inputs take the linear fallback and stay unit. */
+    {
+        PIXELICA_Quat c;
+
+        CHECK(pixelica_quat_from_axis_angle(&c, zaxis, 1.2000001f) == PIXELICA_OK);
+        CHECK(pixelica_quat_slerp(&got, b, c, 0.37f) == PIXELICA_OK);
+        CHECK_NEAR(quat_dot(got, got), 1.0, 1e-6);
+    }
+
+    /* A 180 degree turn still produces a unit result. */
+    {
+        PIXELICA_Quat half;
+
+        CHECK(pixelica_quat_from_axis_angle(&half, zaxis, 3.14159265f) == PIXELICA_OK);
+        CHECK(pixelica_quat_slerp(&got, a, half, 0.5f) == PIXELICA_OK);
+        CHECK_NEAR(quat_dot(got, got), 1.0, 1e-5);
+    }
+
+    /* Invalid inputs change nothing. */
+    {
+        PIXELICA_Quat zero = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        got = a;
+        CHECK(pixelica_quat_slerp(&got, zero, b, 0.5f) == PIXELICA_ERR_INVALID_ARG);
+        CHECK(pixelica_quat_slerp(&got, a, zero, 0.5f) == PIXELICA_ERR_INVALID_ARG);
+        CHECK(pixelica_quat_slerp(&got, a, b, pixelica_t_nan()) ==
+              PIXELICA_ERR_INVALID_ARG);
+        CHECK(pixelica_quat_slerp(NULL, a, b, 0.5f) == PIXELICA_ERR_INVALID_ARG);
+        CHECK(got.x == a.x && got.w == a.w);
+    }
+}
+
 int main(void)
 {
     test_identity_and_layout();
@@ -428,5 +711,8 @@ int main(void)
     test_orthographic();
     test_orthographic_invalid();
     test_null_and_finite();
+    test_normal_matrix();
+    test_quat_basics();
+    test_quat_slerp();
     return pixelica_t_finish("test_math");
 }

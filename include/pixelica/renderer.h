@@ -47,11 +47,16 @@
  *      untextured); effective = (a * opacity + 127) / 255. OPAQUE ignores
  *      both. The depth test runs first (no sampling for hidden fragments).
  *      TEST: effective < alpha_cutoff is discarded (no color, no depth);
- *      survivors are opaque and write depth. BLEND: depth-tested (LESS)
- *      against what is already drawn but NEVER writes depth; effective 0
- *      is skipped, 255 copies, otherwise per 5/6/5 channel
- *      (src*a + dst*(255-a) + 127) / 255. No sorting is done: draw opaque
- *      and TEST geometry first, then BLEND geometry back-to-front.
+ *      survivors are opaque and write depth. BLEND and ADD: depth-tested
+ *      (LESS) against what is already drawn but NEVER write depth;
+ *      effective 0 is skipped, and per 5/6/5 channel
+ *        BLEND (src*a + dst*(255-a) + 127) / 255   (255 copies)
+ *        ADD   min(dst + (src*a + 127) / 255, channel max)
+ *      No sorting is done: draw opaque and TEST geometry first, then BLEND
+ *      geometry back-to-front, then ADD in any order (it commutes up to
+ *      saturation). This framebuffer ADD is NOT PIXELICA_TEXTURE_ADD, which
+ *      combines a texture layer into the fragment color (see
+ *      PIXELICA_MaterialLayers below).
  * 8. Mesh effects (pixelica_draw_mesh_effects, PIXELICA_MeshEffects below):
  *    world clip planes run before step 2 (trivial reject, then polygon
  *    clipping ahead of the frustum planes), bilinear filtering replaces the
@@ -71,6 +76,7 @@
 
 #include "pixelica/draw_options.h" /* PIXELICA_DrawOptions (wrap, alpha) */
 #include "pixelica/image.h" /* PIXELICA_Texture, PIXELICA_RGB565, PIXELICA_MAX_TEXTURE_DIMENSION */
+#include "pixelica/light.h" /* PIXELICA_LightQuad, PIXELICA_LightMask (patches) */
 #include "pixelica/math.h"  /* PIXELICA_Vec2, PIXELICA_Vec3 */
 
 #ifdef __cplusplus
@@ -248,6 +254,180 @@ typedef struct PIXELICA_MeshEffects {
     const PIXELICA_WorldClipPlane *clip_planes; /* NULL if count == 0 */
     size_t clip_plane_count;  /* 0..PIXELICA_MAX_WORLD_CLIP_PLANES */
 } PIXELICA_MeshEffects;
+
+/*
+ * Opt-in normal-based lighting (pixelica_draw_mesh_lit, docs/lighting.md).
+ * Every existing draw entry point stays UNLIT and bit-identical; lighting
+ * only exists when a non-NULL PIXELICA_Lighting is passed, and meshes
+ * without normals keep working unchanged.
+ *
+ * Model
+ *   Per VERTEX (Gouraud), with the object-space normal n of that vertex:
+ *     N  = normalize(normal_matrix * n), normal_matrix = the inverse
+ *          transpose of the model matrix' upper-left 3x3
+ *          (pixelica_mat4_normal_matrix), so normals stay perpendicular to
+ *          the surface under non-uniform scale and shear.
+ *     L_k= normalize(-lights[k].direction)   (direction TOWARD the light)
+ *     d_k= max(0, dot(N, L_k)), or |dot(N, L_k)| when two_sided is set
+ *     f_c= min(255, ambient_c + sum over k of round(light_k.c * d_k))
+ *          independently for c = r, g, b
+ *   f is then interpolated across the triangle perspective-correctly and
+ *   MODULATES the fragment color exactly like a vertex color: each native
+ *   5/6/5 channel becomes floor(channel * f_c / 255 + 0.5). f = 255 is an
+ *   exact identity, f = 0 gives black. Lighting therefore never brightens a
+ *   surface beyond its own texel/vertex color; `ambient` 255,255,255 with no
+ *   lights reproduces the unlit image exactly.
+ *   With PIXELICA_MaterialLayers.vertex_colors the two per-vertex factors
+ *   are multiplied into one (vertex_color_c * f_c / 255, in double, before
+ *   interpolation), so a white vertex color changes nothing and lighting
+ *   can only darken what the vertex color already allows. Lighting does not
+ *   change alpha (the vertex alpha still applies unchanged).
+ *
+ * Shading is per vertex, so a flat-shaded (per-face normal) mesh is exact
+ * and a smooth mesh is Gouraud-interpolated; no per-pixel normal is
+ * reconstructed. Lighting runs before the effects pixel hook, so the hook
+ * sees the lit color.
+ *
+ * Validation (PIXELICA_ERR_INVALID_ARG, before any pixel is written):
+ * normals == NULL with vertex_count > 0, a non-finite or all-zero normal,
+ * light_count > PIXELICA_MAX_DIRECTIONAL_LIGHTS, lights == NULL with
+ * light_count > 0, a light with a non-finite or all-zero direction, the
+ * lighting struct / its arrays overlapping context-owned memory, or a model
+ * matrix whose upper-left 3x3 is singular (no normal matrix exists).
+ */
+#define PIXELICA_MAX_DIRECTIONAL_LIGHTS 4u
+
+typedef struct PIXELICA_DirectionalLight {
+    PIXELICA_Vec3 direction; /* world-space travel direction, non-zero */
+    uint8_t r, g, b;         /* light color/intensity, 255 = full */
+} PIXELICA_DirectionalLight;
+
+typedef struct PIXELICA_Lighting {
+    const PIXELICA_Vec3 *normals; /* vertex_count object-space normals */
+    const PIXELICA_DirectionalLight *lights; /* NULL if light_count == 0 */
+    size_t light_count;           /* 0..PIXELICA_MAX_DIRECTIONAL_LIGHTS */
+    uint8_t ambient_r, ambient_g, ambient_b; /* constant term, 0 = black */
+    bool two_sided;               /* use |dot| (lit from both faces) */
+} PIXELICA_Lighting;
+
+/*
+ * Opt-in light patches and contact shadows (pixelica_draw_light,
+ * pixelica_draw_contact_shadow; docs/pixel_light.md). They are thin wrappers
+ * around pixelica_draw_mesh_effects: one quad, one flat tint texture and the
+ * shape mask as the draw options' texture_alpha plane. Nothing new happens in
+ * the rasterizer, so the depth semantics are the documented ones of step 7:
+ *
+ *   the patch IS depth-tested (nearer geometry hides it) and NEVER writes
+ *   depth, so patches do not occlude each other or anything drawn later.
+ *
+ * Draw the receivers (floor, walls, props) first, then the patches and
+ * shadows, then any additive glow. Each call counts as ONE draw command.
+ *
+ * A patch is geometry the caller places. It is not a shadow computation:
+ * nothing is traced, and an object standing between an opening and the floor
+ * does not carve a hole into the patch.
+ *
+ *   quad     receiver geometry from pixelica_light_quad(),
+ *            pixelica_light_quad_centered() or pixelica_light_quad_project()
+ *   tint     flat RGB565 colour image (pixelica_light_tint_fill): warm for
+ *            light, dark for a shadow
+ *   mask     the shape, EXACTLY as large as `tint` and tightly packed
+ *            (stride == width), because the renderer samples colour and alpha
+ *            at the same texel
+ *   mode     PIXELICA_ALPHA_ADD for light (channels saturate, order does not
+ *            matter) or PIXELICA_ALPHA_BLEND for a tinted darkening pass
+ *            (back-to-front within the same receiver). OPAQUE and TEST are
+ *            rejected: a hard-edged patch is just a textured quad.
+ *   opacity  overall 0..255 scale on top of the mask
+ */
+typedef struct PIXELICA_LightDraw {
+    PIXELICA_LightQuad quad;
+    PIXELICA_Texture tint;
+    PIXELICA_LightMask mask;
+    PIXELICA_AlphaMode mode;
+    uint8_t opacity;
+} PIXELICA_LightDraw;
+
+/*
+ * A soft contact ("blob") shadow on a receiver surface: the ellipse mask of
+ * pixelica_light_mask_build() placed by centre and size and composited with
+ * PIXELICA_ALPHA_BLEND toward `tint`, so it darkens what is already there.
+ *
+ *   center            point on the receiver, normally straight below the
+ *                     object's footprint centre
+ *   normal, u_axis    receiver plane and in-plane +U hint (see
+ *                     pixelica_light_quad_centered)
+ *   radius_u/radius_v half sizes: the SIZE of the shadow
+ *   bias              lift off the receiver, as for PIXELICA_LightPlacement
+ *   tint              RGB565 colour the receiver is pulled toward (a dark,
+ *                     slightly cool tone reads better than pure black)
+ *   mask              ellipse mask; its `softness` is the shadow's softness
+ *                     and its `peak` the maximum darkness, both baked in once
+ *   opacity           per-object 0..255 scale, e.g. fading with height above
+ *                     the receiver
+ *
+ * SOFTNESS lives in the mask, so many objects share one mask and the per
+ * object cost stays a single quad.
+ */
+typedef struct PIXELICA_ContactShadow {
+    PIXELICA_Vec3 center, normal, u_axis;
+    float radius_u, radius_v, bias;
+    PIXELICA_Texture tint;
+    PIXELICA_LightMask mask;
+    uint8_t opacity;
+} PIXELICA_ContactShadow;
+
+/*
+ * Explicit emissive selection for pixelica_bloom_apply (pixelica/light.h).
+ * Use pixelica_emissive_mask_pixel as PIXELICA_MeshEffects.pixel while
+ * drawing the emissive geometry: every fragment that passes the depth test is
+ * recorded into `alpha`, so the bloom selection is exactly the coverage of
+ * those draws - not a brightness guess about the finished frame.
+ *
+ *   alpha          caller-owned plane of (height - 1) * stride + width bytes,
+ *                  row 0 = top, cleared by pixelica_emissive_mask_clear
+ *   depth          OPTIONAL uint16 plane of the same layout. When present the
+ *                  hook also records the NEAREST depth seen per pixel, which
+ *                  pixelica_emissive_mask_resolve() then compares against the
+ *                  finished depth buffer (see the draw-order note below).
+ *   width, height  must match the frame being drawn (fragments outside are
+ *                  ignored)
+ *   stride         >= width, in elements, shared by both planes
+ *   value          0 = record the fragment's own alpha (so a soft-edged glow
+ *                  produces a soft-edged selection), otherwise this constant
+ *   min_alpha      fragments whose alpha is below this are NOT recorded. The
+ *                  hook runs BEFORE the alpha test, so with
+ *                  PIXELICA_ALPHA_TEST set this to the draw's alpha_cutoff
+ *                  and a fragment that the test will discard never emits.
+ *                  Alpha 0 is never recorded, whatever min_alpha and `value`
+ *                  say (it is invisible in every mode).
+ *   written        saturating count of recorded fragments, for diagnostics
+ * `alpha` keeps the MAXIMUM and `depth` the MINIMUM (nearest) of the recorded
+ * fragments, so overlapping emissive draws do not cancel out. Recording never
+ * changes the fragment: the hook always keeps the pixel.
+ *
+ * Draw order and hidden emitters. The hook sees a fragment that passed the
+ * depth test AT THAT MOMENT. Opaque geometry drawn LATER can cover an
+ * emissive pixel, and the recorded mask would then glow through it. Either
+ * draw emissive geometry last (the natural order for additive glows), or
+ * supply `depth` and call pixelica_emissive_mask_resolve() after the frame,
+ * which drops every pixel the final depth buffer shows to be occluded.
+ *
+ * `alpha` and `depth` are WRITTEN while the draw is running. Neither may
+ * contain this descriptor or overlap the other (pixelica_emissive_mask_clear
+ * checks both and refuses), and neither may overlap anything the draw reads
+ * (its mask, textures, vertices) or any context-owned buffer - that last rule
+ * cannot be checked from a per-fragment hook and is the caller's.
+ */
+typedef struct PIXELICA_EmissiveMask {
+    uint8_t *alpha;
+    uint16_t *depth;
+    uint16_t width, height;
+    size_t stride;
+    uint8_t value;
+    uint8_t min_alpha;
+    uint32_t written;
+} PIXELICA_EmissiveMask;
 
 typedef enum PIXELICA_CullMode {
     PIXELICA_CULL_BACK = 0, /* default: skip clockwise (back-facing) triangles */

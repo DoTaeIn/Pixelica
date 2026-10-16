@@ -14,7 +14,9 @@
 
 #include "pixelica/animation.h"
 
-static int pixelica_ease_valid(PIXELICA_Ease ease)
+#include "anim_internal.h"
+
+int pixelica_anim_ease_valid(PIXELICA_Ease ease)
 {
     switch (ease) {
     case PIXELICA_EASE_STEP:
@@ -41,8 +43,7 @@ static int pixelica_mode_valid(PIXELICA_AnimMode mode)
     }
 }
 
-/* `ease` must be valid and t finite. Result in [0, 1]; 0 -> 0, 1 -> 1. */
-static double pixelica_ease_eval(PIXELICA_Ease ease, double t)
+double pixelica_anim_ease_eval(PIXELICA_Ease ease, double t)
 {
     double r;
 
@@ -80,8 +81,7 @@ static double pixelica_ease_eval(PIXELICA_Ease ease, double t)
     return r;
 }
 
-/* from/to finite, e in [0, 1]. Bounded by the endpoints; never overflows. */
-static float pixelica_lerp(float from, float to, double e)
+float pixelica_anim_lerp(float from, float to, double e)
 {
     double lo;
     double hi;
@@ -109,21 +109,21 @@ static float pixelica_lerp(float from, float to, double e)
 
 PIXELICA_Status pixelica_anim_ease(PIXELICA_Ease ease, float t, float *out)
 {
-    if (out == NULL || !pixelica_ease_valid(ease) || !isfinite(t)) {
+    if (out == NULL || !pixelica_anim_ease_valid(ease) || !isfinite(t)) {
         return PIXELICA_ERR_INVALID_ARG;
     }
-    *out = (float)pixelica_ease_eval(ease, (double)t);
+    *out = (float)pixelica_anim_ease_eval(ease, (double)t);
     return PIXELICA_OK;
 }
 
 PIXELICA_Status pixelica_anim_tween(float from, float to, float t, PIXELICA_Ease ease,
                           float *out)
 {
-    if (out == NULL || !pixelica_ease_valid(ease) || !isfinite(from) ||
+    if (out == NULL || !pixelica_anim_ease_valid(ease) || !isfinite(from) ||
         !isfinite(to) || !isfinite(t)) {
         return PIXELICA_ERR_INVALID_ARG;
     }
-    *out = pixelica_lerp(from, to, pixelica_ease_eval(ease, (double)t));
+    *out = pixelica_anim_lerp(from, to, pixelica_anim_ease_eval(ease, (double)t));
     return PIXELICA_OK;
 }
 
@@ -141,7 +141,7 @@ PIXELICA_Status pixelica_anim_sample(const PIXELICA_AnimKeyframe *keys, size_t c
     }
     /* Validate the whole track every call, even when the sample clamps. */
     for (i = 0; i < count; ++i) {
-        if (!isfinite(keys[i].value) || !pixelica_ease_valid(keys[i].ease)) {
+        if (!isfinite(keys[i].value) || !pixelica_anim_ease_valid(keys[i].ease)) {
             return PIXELICA_ERR_INVALID_ARG;
         }
         if (i > 0 && keys[i].tick <= keys[i - 1].tick) {
@@ -172,8 +172,8 @@ PIXELICA_Status pixelica_anim_sample(const PIXELICA_AnimKeyframe *keys, size_t c
              * for a UINT32_MAX-tick interval. */
             t = (double)(tick - keys[lo].tick) /
                 (double)(keys[hi].tick - keys[lo].tick);
-            result = pixelica_lerp(keys[lo].value, keys[hi].value,
-                              pixelica_ease_eval(keys[lo].ease, t));
+            result = pixelica_anim_lerp(keys[lo].value, keys[hi].value,
+                              pixelica_anim_ease_eval(keys[lo].ease, t));
         }
     }
     *out = result;

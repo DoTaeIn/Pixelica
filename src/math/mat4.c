@@ -192,6 +192,57 @@ PIXELICA_Status pixelica_mat4_orthographic(float out[16], float left, float righ
     return PIXELICA_OK;
 }
 
+PIXELICA_Status pixelica_mat4_normal_matrix(float out[16], const float m[16])
+{
+    /* a[r][c] is the upper-left 3x3 of the column-major m. */
+    double a[3][3];
+    double cof[3][3];
+    double det;
+    float r[16];
+    int row;
+    int c;
+
+    if (out == NULL || m == NULL) {
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+    for (c = 0; c < 3; ++c) {
+        for (row = 0; row < 3; ++row) {
+            if (!pixelica_isfinite_f(m[c * 4 + row])) {
+                return PIXELICA_ERR_INVALID_ARG;
+            }
+            a[row][c] = (double)m[c * 4 + row];
+        }
+    }
+
+    cof[0][0] = a[1][1] * a[2][2] - a[1][2] * a[2][1];
+    cof[0][1] = -(a[1][0] * a[2][2] - a[1][2] * a[2][0]);
+    cof[0][2] = a[1][0] * a[2][1] - a[1][1] * a[2][0];
+    cof[1][0] = -(a[0][1] * a[2][2] - a[0][2] * a[2][1]);
+    cof[1][1] = a[0][0] * a[2][2] - a[0][2] * a[2][0];
+    cof[1][2] = -(a[0][0] * a[2][1] - a[0][1] * a[2][0]);
+    cof[2][0] = a[0][1] * a[1][2] - a[0][2] * a[1][1];
+    cof[2][1] = -(a[0][0] * a[1][2] - a[0][2] * a[1][0]);
+    cof[2][2] = a[0][0] * a[1][1] - a[0][1] * a[1][0];
+
+    det = a[0][0] * cof[0][0] + a[0][1] * cof[0][1] + a[0][2] * cof[0][2];
+    if (!isfinite(det) || det == 0.0) { /* singular 3x3 (also NaN/inf) */
+        return PIXELICA_ERR_INVALID_ARG;
+    }
+
+    /* inverse = adjugate / det = cof^T / det, so inverse^T = cof / det. */
+    memset(r, 0, sizeof r);
+    for (row = 0; row < 3; ++row) {
+        for (c = 0; c < 3; ++c) {
+            if (!pixelica_narrow_to_float(cof[row][c] / det, &r[c * 4 + row])) {
+                return PIXELICA_ERR_INVALID_ARG;
+            }
+        }
+    }
+    r[15] = 1.0f;
+    memcpy(out, r, sizeof r);
+    return PIXELICA_OK;
+}
+
 void pixelica_mat4_transform_point(float out_xyzw[4], const float m[16], PIXELICA_Vec3 p)
 {
     float r[4];

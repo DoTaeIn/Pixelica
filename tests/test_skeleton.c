@@ -895,6 +895,258 @@ static void test_random_reference(void)
     }
 }
 
+/* ------------------------------------------------------------------------ */
+/* Normal palette and normal skinning                                        */
+/* ------------------------------------------------------------------------ */
+
+/* Builds the normal palette with a poisoned MAXB-matrix workspace. */
+static PIXELICA_Status normal_palette_into(const float (*palette)[16], uint32_t bones,
+                                           float (*out)[16])
+{
+    float scratch[MAXB][16];
+
+    memset(scratch, 0xA5, sizeof(scratch));
+    return pixelica_skeleton_normal_palette(palette, bones, out, scratch, MAXB);
+}
+
+/* Skins normals with a poisoned MAXV-vertex workspace. */
+static PIXELICA_Status skin_normals_into(const PIXELICA_Vec3 *bind,
+                                         const PIXELICA_SkinWeight *w, size_t n,
+                                         const float (*palette)[16], uint32_t bones,
+                                         PIXELICA_Vec3 *out)
+{
+    PIXELICA_Vec3 scratch[MAXV];
+
+    memset(scratch, 0xA5, sizeof(scratch));
+    return pixelica_skeleton_skin_normals(bind, w, n, palette, bones, out, scratch, MAXV);
+}
+
+static void check_skin_normals_fails(const PIXELICA_Vec3 *bind, const PIXELICA_SkinWeight *w,
+                                     size_t n, const float (*palette)[16], uint32_t bones,
+                                     PIXELICA_Status expected)
+{
+    PIXELICA_Vec3 out[MAXV];
+    PIXELICA_Vec3 before[MAXV];
+
+    memset(out, 0xA5, sizeof(out));
+    memcpy(before, out, sizeof(out));
+    CHECK_EQ_LONG(skin_normals_into(bind, w, n, palette, bones, out), expected);
+    CHECK(memcmp(out, before, sizeof(out)) == 0);
+}
+
+static double vlen(PIXELICA_Vec3 v)
+{
+    return sqrt((double)v.x * v.x + (double)v.y * v.y + (double)v.z * v.z);
+}
+
+static double vdot(PIXELICA_Vec3 a, PIXELICA_Vec3 b)
+{
+    return (double)a.x * b.x + (double)a.y * b.y + (double)a.z * b.z;
+}
+
+/* A rotation is orthonormal: its own 3x3 is already the normal matrix. */
+static void test_normal_palette_rigid(void)
+{
+    float palette[2][16];
+    float normals[2][16];
+
+    rigid(palette[0], 0.3f, -0.7f, 1.1f, 5.0f, -2.0f, 3.0f);
+    rigid(palette[1], 0.0f, HALF_PI, 0.0f, 0.0f, 0.0f, 0.0f);
+    CHECK(normal_palette_into(CM(palette), 2u, normals) == PIXELICA_OK);
+    {
+        int i, c, row;
+
+        for (i = 0; i < 2; ++i) {
+            for (c = 0; c < 3; ++c) {
+                for (row = 0; row < 3; ++row) {
+                    CHECK_NEAR(normals[i][c * 4 + row], palette[i][c * 4 + row], 1e-5);
+                }
+            }
+            /* The translation is dropped: a direction has none. */
+            CHECK_NEAR(normals[i][12], 0.0, 0.0);
+            CHECK_NEAR(normals[i][13], 0.0, 0.0);
+            CHECK_NEAR(normals[i][14], 0.0, 0.0);
+            CHECK(normals[i][15] == 1.0f);
+        }
+    }
+}
+
+/* Under a non-uniform scale the normal palette holds the reciprocals, and
+ * the skinned normal stays perpendicular to the skinned surface. */
+static void test_normal_palette_nonuniform(void)
+{
+    float palette[1][16];
+    float normals[1][16];
+    PIXELICA_Vec3 bind_n[1];
+    PIXELICA_Vec3 out[1];
+    PIXELICA_SkinWeight w[1];
+
+    memset(palette, 0, sizeof palette);
+    palette[0][0] = 0.25f;
+    palette[0][5] = 1.0f;
+    palette[0][10] = 1.0f;
+    palette[0][15] = 1.0f;
+    CHECK(normal_palette_into(CM(palette), 1u, normals) == PIXELICA_OK);
+    CHECK_NEAR(normals[0][0], 4.0, 1e-6);
+    CHECK_NEAR(normals[0][5], 1.0, 1e-6);
+    CHECK_NEAR(normals[0][10], 1.0, 1e-6);
+
+    /* Surface tangent (1, 0, -1) with normal (1, 0, 1). After squashing X
+     * by 1/4 the tangent becomes (0.25, 0, -1); the correctly transformed
+     * normal must still be perpendicular to it. */
+    bind_n[0] = vec3(1.0f, 0.0f, 1.0f);
+    w[0] = skin_weight(0u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+    CHECK(skin_normals_into(bind_n, w, 1u, CM(normals), 1u, out) == PIXELICA_OK);
+    CHECK_NEAR(vlen(out[0]), 1.0, 1e-6);
+    CHECK_NEAR(vdot(out[0], vec3(0.25f, 0.0f, -1.0f)), 0.0, 1e-6);
+
+    /* Using the ORDINARY palette instead is the classic mistake: the
+     * result is no longer perpendicular. */
+    CHECK(skin_normals_into(bind_n, w, 1u, CM(palette), 1u, out) == PIXELICA_OK);
+    CHECK(fabs(vdot(out[0], vec3(0.25f, 0.0f, -1.0f))) > 0.1);
+
+    /* A bone with a zero scale has no normal matrix at all. */
+    {
+        float singular[1][16];
+        float before[1][16];
+        float dest[1][16];
+
+        memset(singular, 0, sizeof singular);
+        singular[0][0] = 1.0f;
+        singular[0][5] = 0.0f; /* flattened */
+        singular[0][10] = 1.0f;
+        singular[0][15] = 1.0f;
+        memset(dest, 0xA5, sizeof dest);
+        memcpy(before, dest, sizeof dest);
+        CHECK(normal_palette_into(CM(singular), 1u, dest) == BAD);
+        CHECK(memcmp(dest, before, sizeof dest) == 0);
+    }
+}
+
+/* Rigid bones need no normal palette: the pose palette works directly and
+ * the result is the rotated, unit-length normal. */
+static void test_skin_normals_rigid_and_blend(void)
+{
+    float palette[2][16];
+    PIXELICA_Vec3 bind_n[3];
+    PIXELICA_Vec3 out[3];
+    PIXELICA_SkinWeight w[3];
+
+    /* Bone 0: identity. Bone 1: 90 degrees about Z plus a translation the
+     * normals must ignore. */
+    rigid(palette[0], 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    rigid(palette[1], 0.0f, 0.0f, HALF_PI, 10.0f, 20.0f, 30.0f);
+
+    bind_n[0] = vec3(1.0f, 0.0f, 0.0f);
+    bind_n[1] = vec3(1.0f, 0.0f, 0.0f);
+    bind_n[2] = vec3(0.0f, 0.0f, 3.0f); /* non-unit input is normalized */
+    w[0] = skin_weight(0u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+    w[1] = skin_weight(1u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+    w[2] = skin_weight(1u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+
+    CHECK(skin_normals_into(bind_n, w, 3u, CM(palette), 2u, out) == PIXELICA_OK);
+    CHECK_NEAR(out[0].x, 1.0, 1e-6);
+    CHECK_NEAR(out[0].y, 0.0, 1e-6);
+    /* Rotated 90 degrees about Z, with NO translation leaking in. */
+    CHECK_NEAR(out[1].x, 0.0, 1e-6);
+    CHECK_NEAR(out[1].y, 1.0, 1e-6);
+    CHECK_NEAR(out[1].z, 0.0, 1e-6);
+    CHECK_NEAR(vlen(out[2]), 1.0, 1e-6);
+    CHECK_NEAR(out[2].z, 1.0, 1e-6);
+
+    /* A 50/50 blend of two influences 90 degrees apart points halfway and
+     * is renormalized to unit length. */
+    bind_n[0] = vec3(1.0f, 0.0f, 0.0f);
+    w[0] = skin_weight(0u, 0.5f, 1u, 0.5f, 0u, 0.0f, 0u, 0.0f);
+    CHECK(skin_normals_into(bind_n, w, 1u, CM(palette), 2u, out) == PIXELICA_OK);
+    CHECK_NEAR(vlen(out[0]), 1.0, 1e-6);
+    CHECK_NEAR(out[0].x, 0.70710678, 1e-6);
+    CHECK_NEAR(out[0].y, 0.70710678, 1e-6);
+
+    /* In-place skinning is allowed (out == bind, same address). */
+    bind_n[0] = vec3(1.0f, 0.0f, 0.0f);
+    w[0] = skin_weight(1u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+    CHECK(skin_normals_into(bind_n, w, 1u, CM(palette), 2u, bind_n) == PIXELICA_OK);
+    CHECK_NEAR(bind_n[0].x, 0.0, 1e-6);
+    CHECK_NEAR(bind_n[0].y, 1.0, 1e-6);
+}
+
+static void test_skin_normals_validation(void)
+{
+    float palette[2][16];
+    PIXELICA_Vec3 bind_n[2];
+    PIXELICA_Vec3 out[MAXV];
+    PIXELICA_Vec3 scratch[MAXV];
+    PIXELICA_SkinWeight w[2];
+
+    rigid(palette[0], 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    /* Exactly 180 degrees about Z, written out so the cancellation below
+     * is exact rather than a sinf() epsilon away from it. */
+    rigid(palette[1], 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    palette[1][0] = -1.0f;
+    palette[1][5] = -1.0f;
+    bind_n[0] = vec3(1.0f, 0.0f, 0.0f);
+    bind_n[1] = vec3(1.0f, 0.0f, 0.0f);
+    w[0] = skin_weight(0u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+    w[1] = skin_weight(0u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+
+    /* A zero or non-finite bind normal has no direction. */
+    bind_n[0] = vec3(0.0f, 0.0f, 0.0f);
+    check_skin_normals_fails(bind_n, w, 2u, CM(palette), 2u, BAD);
+    bind_n[0] = vec3(pixelica_t_nan(), 0.0f, 1.0f);
+    check_skin_normals_fails(bind_n, w, 2u, CM(palette), 2u, BAD);
+    bind_n[0] = vec3(1.0f, 0.0f, 0.0f);
+
+    /* Influences that cancel exactly leave nothing to normalize. */
+    w[0] = skin_weight(0u, 0.5f, 1u, 0.5f, 0u, 0.0f, 0u, 0.0f);
+    check_skin_normals_fails(bind_n, w, 1u, CM(palette), 2u, BAD);
+    w[0] = skin_weight(0u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+
+    /* The same argument, count, weight and palette rules as positions. */
+    check_skin_normals_fails(bind_n, w, 0u, CM(palette), 2u, BAD);
+    check_skin_normals_fails(NULL, w, 2u, CM(palette), 2u, BAD);
+    check_skin_normals_fails(bind_n, NULL, 2u, CM(palette), 2u, BAD);
+    check_skin_normals_fails(bind_n, w, 2u, NULL, 2u, BAD);
+    check_skin_normals_fails(bind_n, w, 2u, CM(palette), 0u, BAD);
+    w[0].weights[0] = 0.4f; /* sum far from 1 */
+    check_skin_normals_fails(bind_n, w, 2u, CM(palette), 2u, BAD);
+    w[0] = skin_weight(9u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f); /* bad bone */
+    check_skin_normals_fails(bind_n, w, 2u, CM(palette), 2u, BAD);
+    w[0] = skin_weight(0u, 1.0f, 0u, 0.0f, 0u, 0.0f, 0u, 0.0f);
+    palette[1][3] = 1.0f; /* non-affine */
+    check_skin_normals_fails(bind_n, w, 2u, CM(palette), 2u, BAD);
+    palette[1][3] = 0.0f;
+
+    /* Workspace too small, and a workspace that aliases another array. */
+    memset(out, 0xA5, sizeof(out));
+    CHECK(pixelica_skeleton_skin_normals(bind_n, w, 2u, CM(palette), 2u, out, scratch,
+                                         1u) == NOMEM);
+    CHECK(pixelica_skeleton_skin_normals(bind_n, w, 2u, CM(palette), 2u, out, out,
+                                         MAXV) == BAD);
+    CHECK(pixelica_skeleton_skin_normals(bind_n, w, 2u, CM(palette), 2u, out, NULL,
+                                         MAXV) == BAD);
+    /* A partial overlap of out and bind is rejected (exact is allowed). */
+    CHECK(pixelica_skeleton_skin_normals(bind_n, w, 2u, CM(palette), 2u, bind_n + 1,
+                                         scratch, MAXV) == BAD);
+
+    /* normal_palette argument and workspace rules. */
+    {
+        float dest[2][16];
+        float ws[MAXB][16];
+
+        CHECK(pixelica_skeleton_normal_palette(NULL, 2u, dest, ws, MAXB) == BAD);
+        CHECK(pixelica_skeleton_normal_palette(CM(palette), 2u, NULL, ws, MAXB) == BAD);
+        CHECK(pixelica_skeleton_normal_palette(CM(palette), 2u, dest, NULL, MAXB) == BAD);
+        CHECK(pixelica_skeleton_normal_palette(CM(palette), 0u, dest, ws, MAXB) == BAD);
+        CHECK(pixelica_skeleton_normal_palette(CM(palette), 2u, dest, ws, 1u) == NOMEM);
+        /* out must not alias the input palette or the workspace. */
+        CHECK(pixelica_skeleton_normal_palette(CM(palette), 2u, palette, ws, MAXB) == BAD);
+        CHECK(pixelica_skeleton_normal_palette(CM(palette), 2u, dest, dest, MAXB) == BAD);
+        CHECK(pixelica_skeleton_normal_palette(CM(palette), 2u, dest, ws, MAXB) ==
+              PIXELICA_OK);
+    }
+}
+
 int main(void)
 {
     test_pose_bind_is_identity();
@@ -911,5 +1163,9 @@ int main(void)
     test_pose_aliasing();
     test_skin_aliasing();
     test_random_reference();
+    test_normal_palette_rigid();
+    test_normal_palette_nonuniform();
+    test_skin_normals_rigid_and_blend();
+    test_skin_normals_validation();
     return pixelica_t_finish("test_skeleton");
 }

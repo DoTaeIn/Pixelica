@@ -203,6 +203,19 @@ static uint16_t pixelica2d_blend(uint16_t src, uint16_t dst, uint32_t a)
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
+/* Framebuffer additive blend, per 5/6/5 channel: dst + (src*a + 127)/255,
+ * saturated at the channel maximum. */
+static uint16_t pixelica2d_add(uint16_t src, uint16_t dst, uint32_t a)
+{
+    uint32_t s = src, d = dst;
+    uint32_t r = (d >> 11) + (((s >> 11) * a + 127u) / 255u);
+    uint32_t g = ((d >> 5) & 0x3Fu) + ((((s >> 5) & 0x3Fu) * a + 127u) / 255u);
+    uint32_t b = (d & 0x1Fu) + (((s & 0x1Fu) * a + 127u) / 255u);
+
+    return (uint16_t)(((r < 31u ? r : 31u) << 11) | ((g < 63u ? g : 63u) << 5) |
+                      (b < 31u ? b : 31u));
+}
+
 /* Key, depth test, blend, depth write. `d` may be NULL when unused. */
 static void pixelica2d_plot(const PIXELICA2D_Shade *sh, uint16_t *c, uint16_t *d, uint16_t src, uint64_t *written)
 {
@@ -435,6 +448,8 @@ static void pixelica2d_sprite_plot(const PIXELICA2D_SpriteJob *j, uint16_t *c, u
         if (sh->write) {
             *d = sh->depth;
         }
+    } else if (j->alpha_mode == PIXELICA_ALPHA_ADD) {
+        *c = pixelica2d_add(src, *c, a);
     } else {
         *c = a == 255u ? src : pixelica2d_blend(src, *c, a);
     }
@@ -703,11 +718,11 @@ PIXELICA_Status pixelica2d_draw_sprite_ex(PIXELICA2D_Context *ctx, const PIXELIC
     if ((int)o.wrap_v != (int)PIXELICA_WRAP_CLAMP && (int)o.wrap_v != (int)PIXELICA_WRAP_REPEAT) {
         return PIXELICA_ERR_INVALID_ARG;
     }
-    if ((int)o.alpha_mode < (int)PIXELICA_ALPHA_OPAQUE || (int)o.alpha_mode > (int)PIXELICA_ALPHA_BLEND) {
+    if ((int)o.alpha_mode < (int)PIXELICA_ALPHA_OPAQUE || (int)o.alpha_mode > (int)PIXELICA_ALPHA_ADD) {
         return PIXELICA_ERR_INVALID_ARG;
     }
     sp = *sprite;
-    if (o.alpha_mode == PIXELICA_ALPHA_BLEND) {
+    if (o.alpha_mode == PIXELICA_ALPHA_BLEND || o.alpha_mode == PIXELICA_ALPHA_ADD) {
         sp.depth_write = false;
     }
     if (!pixelica2d_sprite_prepare(&t, &sp, NULL, &job, 1)) {

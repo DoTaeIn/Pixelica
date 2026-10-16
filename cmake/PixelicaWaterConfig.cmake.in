@@ -1,0 +1,38 @@
+@PACKAGE_INIT@
+# Independent package of the optional water add-on. It never replaces a base
+# SDK file, so the add-on and either base SDK can be installed in any order.
+#
+#   find_package(PixelicaWater CONFIG REQUIRED)                  -> Pixelica::water
+#   find_package(PixelicaWater CONFIG REQUIRED COMPONENTS water3d)
+#       -> also Pixelica::water3d, which needs the 3D core in the same prefix.
+#
+# The core component needs only Pixelica::common, so a 2D-only, 3D-only or
+# common-only base SDK can all host it. The adapter is imported only when its
+# export file was installed AND the prefix really offers Pixelica::core; a
+# prefix without the 3D core reports water3d as not found instead of failing
+# the whole package.
+include(CMakeFindDependencyMacro)
+find_dependency(Pixelica @PROJECT_VERSION@ CONFIG COMPONENTS common)
+if(NOT TARGET Pixelica::water)
+  include("${CMAKE_CURRENT_LIST_DIR}/PixelicaWaterTargets.cmake")
+  set_property(TARGET Pixelica::water APPEND PROPERTY
+    INTERFACE_LINK_LIBRARIES Pixelica::common)
+endif()
+set(PixelicaWater_water_FOUND TRUE)
+
+set(PixelicaWater_water3d_FOUND FALSE)
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/PixelicaWater3DTargets.cmake")
+  if(NOT TARGET Pixelica::core)
+    find_package(Pixelica @PROJECT_VERSION@ CONFIG QUIET COMPONENTS core)
+  endif()
+  if(TARGET Pixelica::core)
+    if(NOT TARGET Pixelica::water3d)
+      include("${CMAKE_CURRENT_LIST_DIR}/PixelicaWater3DTargets.cmake")
+      set_property(TARGET Pixelica::water3d APPEND PROPERTY
+        INTERFACE_LINK_LIBRARIES Pixelica::water Pixelica::core)
+    endif()
+    set(PixelicaWater_water3d_FOUND TRUE)
+  endif()
+endif()
+
+check_required_components(PixelicaWater)

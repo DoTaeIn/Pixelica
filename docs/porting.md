@@ -22,6 +22,27 @@ plus a main loop (see `examples/common/game_runner.c` and `firmware/esp32p4/main
 Game code is shared: no `#ifdef ESP_PLATFORM` in examples (the pixel_room and hello_* sources are the
 same files for desktop and firmware).
 
+### Second (optional) surface: save storage
+
+A port that wants persistent saves fills in a `PIXELICA_StorageOps` table
+(`include/pixelica/storage.h`) as well. It is a **dumb blob store**: store these bytes under
+(game id, slot), give them back, remove them, report the size. The portable layer keeps the game id
+rules, the slot numbers and the versioned CRC-32 envelope of `pixelica/save.h`, so an NVS or SD
+adapter inherits corruption detection and schema versioning without implementing any format.
+
+| Callback | Contract |
+|---|---|
+| `write` | required; store the blob, atomically if the medium allows it |
+| `read` | required; `NOT_FOUND` when empty, `NO_MEMORY` (without copying) when the caller's buffer is too small |
+| `erase` | optional |
+| `size` | optional; `exists` falls back to a zero-capacity `read` |
+
+`src/game/storage_fs.c` is the PC implementation and is the shortest worked example (about 100 lines
+over the shared file helpers). Nothing in `pixelica/storage.h` or `pixelica/app.h` allocates, keeps
+global state or reads a clock, so both work unchanged on a microcontroller.
+`docs/storage.md` and `docs/lifecycle.md` have the full contracts. **Untested on a board**, like
+everything else here.
+
 ## Raspberry Pi / arm64 Linux
 
 Intended path: the SDL3 platform on a 64-bit Raspberry Pi OS, built natively (`cmake -S . -B build

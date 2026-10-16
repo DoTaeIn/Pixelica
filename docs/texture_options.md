@@ -55,9 +55,13 @@ U/V를 독립적으로 설정하며 2의 거듭제곱이 아닌 텍스처도 지
 | `OPAQUE` | `options.opacity`와 알파 평면을 무시. 기존 `sprite.opacity`/컬러 키/깊이 동작 유지 |
 | `TEST` | 유효 알파 `< alpha_cutoff`이면 버림. 통과한 픽셀은 불투명 복사, `depth_test`/`depth_write` 존중 |
 | `BLEND` | 유효 알파 0이면 깊이까지 건너뜀. RGB565 반올림 source-over, `depth_test`만 적용, 깊이는 **쓰지 않음** |
+| `ADD` | BLEND와 같은 유효 알파·깊이 규칙. 색은 채널마다 `min(dst + round(src*a/255), 최대값)`으로 **포화 누적** |
 
 BLEND는 순서 의존적이며 자동 OIT는 없습니다. 불투명/TEST를 먼저 그리고, BLEND는 호출자가
 뒤에서 앞으로(back-to-front) 정렬해 그리세요. 3D도 동일한 규칙입니다.
+`ADD`는 포화를 빼면 교환법칙이 성립하므로 정렬이 필요 없고, BLEND 뒤에 임의 순서로
+그리면 됩니다. 머티리얼 레이어의 `PIXELICA_TEXTURE_ADD`와는 다른 단계이며 자세한 비교와
+깊이 의미는 [`blending.md`](blending.md)에 있습니다.
 
 ## 기존 2D opacity 특이사항
 

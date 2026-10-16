@@ -30,6 +30,8 @@ Pixelica는 GPU 없이 CPU만으로 RGB565 프레임버퍼에 그리는 2D / 2.5
 | `Pixelica::particles` | 고정 풀 파티클·불꽃·연기·비 (렌더러 독립) | `PIXELICA_BUILD_PARTICLES` | OFF |
 | `Pixelica::particles2d` / `::particles25d` | 2D 스프라이트·3D 빌보드 출력 | 파티클 ON + 해당 렌더러 | OFF |
 | `Pixelica::shaders` | CPU 픽셀 효과·색 보정·팔레트·외곽선·블러 | `PIXELICA_BUILD_SHADERS` | OFF |
+| `Pixelica::water` | 해석적 파도 높이장·샘플점 부력/항력 (렌더러 독립, [안내](docs/water.md)) | `PIXELICA_BUILD_WATER` | OFF |
+| `Pixelica::water3d` | 파도 표면 격자 생성·그리기 어댑터 | 물 ON + 3D 렌더러 | OFF |
 
 ## 요구 사항
 
@@ -92,6 +94,25 @@ SDL 3.4.18이 이미 설치되어 있으면 `-DPIXELICA_FETCH_SDL3=ON`을 빼세
 `pixelica/draw_options.h`의 공통 옵션으로 U/V별 `CLAMP`·`REPEAT`, 알파 테스트·RGB565 블렌딩을 설정합니다.
 3D는 `pixelica_draw_mesh_options()`, 2D 스프라이트는 `pixelica2d_draw_sprite_ex()`를 사용합니다.
 기존 텍스처 에셋과 그리기 API는 그대로 사용할 수 있습니다. [사용법·깊이·그리기 순서](docs/texture_options.md)를 참고하세요.
+빛을 **더하는** 효과(글로우·스파크·플래시)는 같은 옵션의 `PIXELICA_ALPHA_ADD`로, 3D와 2D 모두에서
+RGB565 채널이 포화하는 [가산 블렌딩](docs/blending.md)을 씁니다. 정렬이 필요 없고 깊이를 쓰지 않습니다.
+
+### 조명 (opt-in)
+
+렌더러의 기본값은 여전히 unlit입니다. 메시에 법선을 주고 `pixelica_draw_mesh_lit()`로 그리면
+ambient + 최대 4개의 방향광 Lambert 조명이 적용됩니다. 비균등 스케일에서도 법선이 표면에 수직으로
+남도록 **역전치 노멀 행렬**을 씁니다. 기존 그리기 API는 전부 비트 단위로 그대로입니다.
+[사용법·수식·검증](docs/lighting.md)을 참고하세요.
+
+### 픽셀 조명 도구 (opt-in)
+
+`pixelica/light.h`(공통 라이브러리)는 창문 모양 **광 패치**, 부드러운 **접지 그림자**,
+명시적 이미시브 마스크 기반 **선택적 블룸**을 재사용 가능한 도구로 제공합니다. 마스크와
+틴트는 기존 알파/가산 경로로 그대로 들어가고, 3D 헬퍼 `pixelica_draw_light()` ·
+`pixelica_draw_contact_shadow()`는 쿼드 하나를 기존 드로우 경로로 그립니다(깊이 테스트는
+받고 깊이는 쓰지 않음). 블룸은 더하기만 하므로 글로우가 닿지 않은 픽셀은 값이 그대로입니다.
+가시성 계산은 하지 않습니다. [사용법·한계·검증](docs/pixel_light.md), 실행 예제는
+`examples/hello_pixel_light/`.
 
 ### 카메라·디버그 (기본 포함)
 
@@ -106,10 +127,12 @@ SDL 3.4.18이 이미 설치되어 있으면 `-DPIXELICA_FETCH_SDL3=ON`을 빼세
 - [청크 관리](docs/chunks.md): 주변 청크 선택, 중복 로딩 방지, 로딩·해제 콜백과 프레임당 처리량 제한. 청크 크기·입출력·범위는 게임에서 정합니다.
 - 타이틀·플레이 화면 전환은 기존 ScreenManager를 사용합니다. 비동기 스트리밍과 렌더링 가시성 선별은 게임에서 구현합니다.
 
-### 저장·화면 전환·다국어 (기본 포함)
+### 수명주기·저장·화면 전환·다국어 (기본 포함)
 
 두 SDK의 `Pixelica::common`에 포함되며 별도 다운로드나 활성화 옵션이 없습니다.
 
+- [게임 수명주기](docs/lifecycle.md): 초기화·일시정지/재개·중단(suspend)/재개·종료 상태 기계와 체크포인트. 체크포인트는 게임이 직렬화한 바이트이며 프로세스 스냅샷이 아닙니다.
+- [저장소](docs/storage.md): 게임 ID·세이브 슬롯·플랫폼 콜백과 PC 파일시스템 어댑터. 봉투·CRC는 아래 저장 모듈을 그대로 씁니다.
 - [저장·설정](docs/save.md): 버전·CRC 검사와 PC 파일 저장. 임베디드는 같은 데이터를 NVS·SD 등에 저장할 수 있습니다.
 - [게임 화면](docs/screens.md): 타이틀·플레이·일시정지·결과 화면, 콜백 중 안전한 전환 요청.
 - [다국어](docs/i18n.md): UTF-8 번역표, 언어 전환·대체 언어, 게임에서 쓰는 글자만 추출하는 BDF 폰트 도구.
@@ -263,7 +286,8 @@ tests/              C 테스트
 - [`docs/collision2d.md`](docs/collision2d.md): 2D 충돌·중력·점프 API와 에디터 설정
 - [`docs/api.md`](docs/api.md), [`docs/architecture.md`](docs/architecture.md)
 - [`docs/sdk.md`](docs/sdk.md), [`docs/porting.md`](docs/porting.md)
-- [`docs/2d.md`](docs/2d.md), [`docs/animation.md`](docs/animation.md), [`docs/rigging.md`](docs/rigging.md)
+- [`docs/2d.md`](docs/2d.md), [`docs/animation.md`](docs/animation.md), [`docs/anim_clips.md`](docs/anim_clips.md), [`docs/rigging.md`](docs/rigging.md)
+- [`docs/lighting.md`](docs/lighting.md), [`docs/blending.md`](docs/blending.md), [`docs/pixel_light.md`](docs/pixel_light.md)
 - [`docs/input_manager.md`](docs/input_manager.md), [`docs/online.md`](docs/online.md)
 - [`docs/ui.md`](docs/ui.md): 기본 UI, 입력·포커스·레이아웃·사용자 글꼴·설치 예제
 - [`docs/audio.md`](docs/audio.md): 선택 오디오 모듈, PC 출력과 임베디드 포트 준비
