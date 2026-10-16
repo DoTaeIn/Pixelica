@@ -1,0 +1,41 @@
+---
+title: 게임 기능 연결하기
+---
+
+# 게임 기능 연결하기
+
+공통 라이브러리 `Pixelica::common`에 게임 상태와 데이터를 연결하고, 필요한 렌더러·선택 모듈을 조합합니다. 아래 가이드는 현재 공개 헤더의 사용 계약으로 이어집니다.
+
+## 수명주기와 체크포인트 저장
+
+`app.h`는 pause/suspend/resume/shutdown과 체크포인트 요청을 게임 콜백에 전달합니다. 게임이 상태를 직렬화하고 복원하며, 플랫폼 이벤트와 오디오 정지·재개도 게임에서 연결합니다. 프로세스 메모리 스냅샷을 저장하는 방식은 아닙니다.
+
+`storage.h`는 게임 ID와 슬롯을 기준으로 저장소를 추상화합니다. PC 파일 어댑터는 임시 파일 교체와 CRC 검사를 제공하며, SD·플래시에는 별도 콜백을 구현합니다. 전원 차단 내구성은 별도 검증이 필요합니다.
+
+- [수명주기와 체크포인트](../engine/lifecycle.md)
+- [저장소 어댑터](../engine/storage.md)
+- [저장 데이터 형식](../engine/save.md)
+
+## 애니메이션 클립과 전환
+
+본별 TRS 클립, 쿼터니언 보간, 크로스페이드, 종료·특정 시각 이벤트는 공통 API를 사용합니다. 메시의 본 스키닝에는 선택 모듈 `PIXELICA_BUILD_SKELETON=ON`이 필요합니다. 이벤트를 공격 판정이나 게임 상태 전환에 연결하는 책임은 게임에 있습니다.
+
+- [클립·전환·이벤트](../engine/anim_clips.md)
+- [본 계층과 노멀 스키닝](../engine/rigging.md)
+
+## 픽셀 그래픽의 빛과 발광
+
+3D 노멀 조명은 정점 단위 Gouraud 방식입니다. 화면 가산 합성 `PIXELICA_ALPHA_ADD`는 2D·3D 그리기에 적용하며, 재질 텍스처 레이어의 가산 연산과 구분합니다.
+
+빛 패치로 창문빛을 놓고, 접촉 그림자로 물체 아래를 눌러 주며, 명시적 발광 이미지·마스크에 블룸을 적용할 수 있습니다. 빛 패치와 접촉 그림자는 지정한 면에 놓는 효과로, 자동 그림자 추적은 제공하지 않습니다. 작업 버퍼와 깊이·마스크 처리 순서는 가이드의 계약을 따릅니다.
+
+- [노멀 조명](../engine/lighting.md)
+- [화면 가산 블렌딩](../engine/blending.md)
+- [빛 패치·접촉 그림자·선택적 블룸](../engine/pixel_light.md)
+- [선택 CPU 후처리 모듈](../engine/shaders.md)
+
+## 검증할 예제
+
+`hello_lifecycle`은 저장 후 프로세스를 다시 시작해 이어하기를 검사합니다. `hello_lighting`은 공통 플랫폼 드라이버를 사용하므로 SDL3 창으로 실행할 수 있습니다. `hello_pixel_light`는 HEADLESS 캡처·검증 프로그램입니다.
+
+CTest의 `lifecycle_checkpoint_restart`, `test_anim_clip`, `test_lighting`, `test_blend_add`, `test_blend_add2d`, `test_bloom` 등으로 변경 범위를 검사하세요. 등록되는 테스트는 빌드 옵션에 따라 달라집니다. 최신 개발 명령과 날짜별 검증 범위는 [개발 문서](../engine/DEVELOPMENT.md)의 42장을 확인하세요.

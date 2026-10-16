@@ -9,3 +9,14 @@ import source from '@site/src/generated/native';
 다음 코드는 `examples/hello_triangle/hello_triangle.c`에서 빌드 시 직접 읽어옵니다. 실행하려면 Getting Started의 네이티브 빌드 환경을 사용하세요.
 
 <CodeBlock language="c" title="examples/hello_triangle/hello_triangle.c">{source}</CodeBlock>
+
+## 기능별 네이티브 예제
+
+| 예제 | 확인할 기능 | 실행 방식 |
+| --- | --- | --- |
+| `hello_lifecycle` | 체크포인트 저장·종료·재실행 복원 | HEADLESS 검증 |
+| `hello_lighting` | 노멀을 사용하는 기본 조명 | HEADLESS 또는 SDL3 창 |
+| `hello_pixel_light` | 창문빛 패치·접촉 그림자·선택적 발광 | HEADLESS 캡처·검증 |
+| `hello_water` | 잔잔한 물의 평형·파도 위 몸체의 부력 | HEADLESS PPM 캡처·검증 |
+
+[게임 기능 연결](../guides/game-features.mdx)과 [수면·부력 데모 실행](../guides/water.mdx)을 확인하세요. 웹 Playground는 별도 Canvas 실험이며 이 C 예제들을 브라우저에서 실행하는 바인딩은 아닙니다.

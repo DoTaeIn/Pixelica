@@ -1,0 +1,50 @@
+---
+title: 선택 수면·부력 애드온
+---
+
+# 수면·부력 애드온
+
+바다 표면과 뗏목을 같은 파동 모델로 계산하는 선택 모듈입니다. 기본값은 OFF이며, 꺼진 SDK에는 물 헤더·라이브러리가 포함되지 않습니다.
+
+| 타깃 | 역할 | 의존성 |
+| --- | --- | --- |
+| `Pixelica::water` | 높이·노멀·속도 조회, 부력·항력의 힘과 토크, 선택 단일 몸체 적분기 | `Pixelica::common` |
+| `Pixelica::water3d` | 수면 격자 생성·그리기 | 물 코어와 `Pixelica::core` |
+
+## 저장소에서 빌드하기
+
+```bash
+cmake -S . -B build-docs-water -DCMAKE_BUILD_TYPE=Debug -DPIXELICA_PLATFORM=HEADLESS -DPIXELICA_BUILD_WATER=ON -DPIXELICA_WARNINGS_AS_ERRORS=ON
+cmake --build build-docs-water --parallel
+ctest --test-dir build-docs-water --output-on-failure
+cmake -E make_directory build-docs-water/captures
+./build-docs-water/hello_water --frames 420 --out-dir build-docs-water/captures --scale 2
+```
+
+Visual Studio는 빌드에 `--config Debug`, CTest에 `-C Debug`를 추가하고 `Debug/hello_water.exe`를 실행합니다. 데모는 HEADLESS로 PPM 캡처와 검증 수치를 출력합니다. SDL3 창 데모는 아닙니다.
+
+## 기본 SDK와 별도 설치
+
+물 애드온은 바이너리 ZIP과 소스 ZIP으로 분리해서 배포할 수 있습니다. 현재 로컬 패키지를 생성했으며 공개 다운로드 릴리스는 아직 게시하지 않았습니다. 저장소에서 다음 명령으로 새 패키지를 생성할 수 있습니다.
+
+```bash
+python3 tools/package_water.py --build-dir build-docs-water-package --output-dir dist/docs-water-package --jobs 8
+```
+
+기존 결과를 덮어쓰지 않도록 새 빌드·출력 디렉터리를 사용합니다. `PixelicaWater-<version>-<platform>.zip`, `PixelicaWater-<version>-source.zip`, `SHA256SUMS.txt`가 생성됩니다. 바이너리는 기본 SDK와 컴파일러·아키텍처·구성이 맞아야 합니다. 설치·소스 애드온 빌드 절차는 [물 API 가이드](../engine/water.md)와 ZIP 안의 README를 따릅니다.
+
+```cmake
+find_package(PixelicaWater CONFIG REQUIRED)
+target_link_libraries(my_game PRIVATE Pixelica::water)
+# 3D 수면 출력도 사용한다면 Pixelica::water3d를 연결합니다.
+```
+
+## 게임에서 연결하기
+
+렌더링과 부력 조회에 같은 수면 파라미터와 시간을 넘깁니다. 수면은 최대 8개 파동의 높이장이며, 부력 지점별 잠김 부피와 저항으로 힘·토크를 구합니다. `pixelica_water_load()` 결과에는 중력이 포함됩니다. 고정 시간 간격과 질량·관성을 정하고, 기존 물리 엔진 또는 선택 적분기에 하중을 전달하세요. 격자 렌더링에는 근사 오차가 있습니다.
+
+뗏목 데모는 잔잔한 물의 평형과 파도에서의 기울기·잠김, 렌더 수면과 물리 수면의 차이를 검사합니다. 컵에서 쏟아지는 유체, 부서지는 파도, 물보라, 일반 강체 충돌은 제공하지 않습니다. 적분기의 안정 조건과 단위는 [물 API 가이드](../engine/water.md)를 확인하세요.
+
+## 검증 범위
+
+macOS ARM64에서 물 ON HEADLESS Debug strict 전체 CTest 72/72와 물 관련 재검사 7/7을 통과한 기록이 있습니다. ASan/UBSan, 설치된 바이너리·소스 애드온 소비자, 기본 OFF의 파일 격리도 확인했습니다. 이는 해당 구성의 기록이며 Windows/Linux 물 바이너리나 실물 보드 성능을 보장하지 않습니다. 날짜와 상세 조건은 [개발 문서](../engine/DEVELOPMENT.md)의 42장을 확인하세요.

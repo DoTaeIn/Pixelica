@@ -1,11 +1,12 @@
 import {readdir, readFile, mkdir, writeFile, rm} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
+import {posix} from 'node:path';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const target = new URL('../docs/engine/', import.meta.url);
 await rm(target, {recursive:true, force:true}); await mkdir(target, {recursive:true});
 for (const name of (await readdir(root + 'docs')).filter(n => n.endsWith('.md'))) {
  let content = await readFile(root + 'docs/' + name, 'utf8');
- content = content.replace(/\]\((?!https?:|#|mailto:)([^)]+)\)/g, (_, path) => `](https://github.com/DoTaeIn/Pixelica/blob/main/${path.startsWith('docs/') ? path : 'docs/' + path})`);
+ content = content.replace(/\]\((?!https?:|#|mailto:)([^)]+)\)/g, (_, path) => `](https://github.com/DoTaeIn/Pixelica/blob/main/${path.startsWith('docs/') ? path : posix.normalize('docs/' + path)})`);
  await writeFile(new URL(name, target), `---
 mdx:
   format: md
