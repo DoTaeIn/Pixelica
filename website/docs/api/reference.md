@@ -32,3 +32,6 @@ title: API Reference
 | 수면 3D 어댑터 | [water3d.h](https://github.com/DoTaeIn/Pixelica/blob/main/modules/water/include/pixelica/water3d.h) | [애드온 설치](../guides/water.mdx) |
 
 수명주기와 저장소는 [게임 기능 가이드](../guides/game-features.mdx)에서 시작하세요. 선택 모듈 헤더는 해당 옵션을 켠 SDK·애드온에만 설치됩니다.
+
+공통 유니코드 폰트: [font.h](https://github.com/DoTaeIn/Pixelica/blob/main/include/pixelica/font.h).
+사용법과 내장 한글 폰트 범위는 [다국어·폰트](../engine/i18n.md)를 확인하세요.

@@ -70,7 +70,9 @@ COMMON_FILES = (
     # independent expectation of what an SDK must contain; the test below
     # compares the two lists and fails if either side drifts.
     + ["share/Pixelica/docs/" + name for name in EXPECTED_GUIDES]
-    + ["share/Pixelica/tools/pixelica_font.py"]
+    + ["share/Pixelica/tools/pixelica_font.py",
+       "share/Pixelica/licenses/GalmuriMono11/OFL.txt",
+       "share/Pixelica/licenses/GalmuriMono11/README.md"]
     + ["include/pixelica/ui.h", "lib/libpixelica_ui.a", "lib/libpixelica_uid.a",
        "lib/cmake/PixelicaUI/PixelicaUIConfig.cmake",
        "lib/cmake/PixelicaUI/PixelicaUIConfigVersion.cmake",

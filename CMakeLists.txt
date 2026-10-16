@@ -107,7 +107,7 @@ set(BUILD_TESTING ${PIXELICA_TESTS_ENABLED})
 add_library(pixelica_options INTERFACE)
 
 if(MSVC)
-  target_compile_options(pixelica_options INTERFACE /W4 /permissive-)
+  target_compile_options(pixelica_options INTERFACE /W4 /permissive- /utf-8)
   if(PIXELICA_WARNINGS_AS_ERRORS)
     target_compile_options(pixelica_options INTERFACE /WX)
   endif()
@@ -320,7 +320,7 @@ if(BUILD_TESTING)
   if(NOT PIXELICA_TEST_SOURCES)
     message(WARNING "BUILD_TESTING is ON but no tests/test_*.c files were found")
   endif()
-  set(PIXELICA_COMMON_TESTS test_math test_anim_clip test_save test_storage test_app test_screens test_i18n test_camera test_chunks test_framebuffer test_collision2d test_light_mask test_bloom)
+  set(PIXELICA_COMMON_TESTS test_font test_math test_anim_clip test_save test_storage test_app test_screens test_i18n test_camera test_chunks test_framebuffer test_collision2d test_light_mask test_bloom)
   set(PIXELICA_COMMON_MIXED_TESTS test_input test_animation)
   set(PIXELICA_RENDERER2D_TESTS test_renderer2d test_texture_options2d test_blend_add2d)
   set(PIXELICA_HYBRID_TESTS test_hybrid)
@@ -686,6 +686,9 @@ if(PIXELICA_INSTALL)
     # tools/package_sdk.py, which refuses to package an SDK that is missing one.
     install(FILES docs/save.md docs/storage.md docs/lifecycle.md docs/screens.md docs/i18n.md docs/texture_options.md docs/camera.md docs/debug.md docs/chunks.md docs/material_layers.md docs/framebuffer.md docs/render_effects.md docs/lighting.md docs/blending.md docs/anim_clips.md docs/pixel_light.md
       DESTINATION "${PIXELICA_INSTALL_SHAREDIR}/docs"
+      COMPONENT ${pixelica_common_component})
+    install(FILES assets/fonts/galmuri/OFL.txt assets/fonts/galmuri/README.md
+      DESTINATION "${PIXELICA_INSTALL_SHAREDIR}/licenses/GalmuriMono11"
       COMPONENT ${pixelica_common_component})
     install(FILES tools/pixelica_font.py
       DESTINATION "${PIXELICA_INSTALL_SHAREDIR}/tools"

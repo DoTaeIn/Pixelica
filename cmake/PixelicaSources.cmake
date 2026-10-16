@@ -21,6 +21,8 @@ set(PIXELICA_COMMON_SOURCE_NAMES
   game/storage_fs.c
   game/screens.c
   game/i18n.c
+  game/font.c
+  game/font_korean.c
   game/camera.c
   game/debug.c
   game/chunks.c
@@ -61,6 +63,7 @@ set(PIXELICA_COMMON_HEADER_NAMES
   storage.h
   screens.h
   i18n.h
+  font.h
   camera.h
   debug.h
   chunks.h

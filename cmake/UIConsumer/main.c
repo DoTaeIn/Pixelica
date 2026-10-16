@@ -24,6 +24,8 @@ static void unload_chunk(void *userdata, PIXELICA_ChunkCoord coord)
 
 int main(void)
 {
+    PIXELICA_Font korean = pixelica_font_korean(1u);
+    if (pixelica_font_check_text(&korean, "\xED\x95\x9C", 3u, NULL, NULL) != PIXELICA_OK) return 50;
     PIXELICA_Body2D body = {{{0.0f, 0.0f}, {1.0f, 1.0f}}, {0.0f, 0.0f}, 0u, 0u};
     const PIXELICA_AABB2D floor_box = {{-10.0f, 1.0f}, {10.0f, 2.0f}};
     if (pixelica_body2d_step(&body, 1.0f / 60.0f, 600.0f, 220.0f, 600.0f,

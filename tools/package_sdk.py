@@ -73,7 +73,7 @@ RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 VERSION_RE = re.compile(r"project\s*\(\s*Pixelica\s+VERSION\s+(\d+\.\d+\.\d+)", re.IGNORECASE)
 
 COMMON_HEADERS = ("status.h", "input.h", "platform.h", "math.h", "animation.h", "anim_clip.h",
-                  "image.h", "draw_options.h", "assets_common.h", "save.h", "storage.h", "app.h", "screens.h", "i18n.h", "camera.h", "debug.h", "chunks.h", "framebuffer.h", "light.h", "collision2d.h")
+                  "image.h", "draw_options.h", "assets_common.h", "save.h", "storage.h", "app.h", "screens.h", "i18n.h", "font.h", "camera.h", "debug.h", "chunks.h", "framebuffer.h", "light.h", "collision2d.h")
 HEADERS_3D = ("pixelica.h", "renderer.h", "assets.h", "scene.h")
 
 # Reference guides installed under share/Pixelica/docs/ by every SDK profile
@@ -515,6 +515,8 @@ def check_variant_files(variant: str, files: Iterable[str], configs: Sequence[st
     for guide in COMMON_GUIDES:
         need("share/Pixelica/docs/" + guide)
     need("share/Pixelica/tools/pixelica_font.py")
+    need("share/Pixelica/licenses/GalmuriMono11/OFL.txt")
+    need("share/Pixelica/licenses/GalmuriMono11/README.md")
 
     if variant == "Pixelica2D":
         need("include/pixelica/renderer2d.h")

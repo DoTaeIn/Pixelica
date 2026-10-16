@@ -409,8 +409,25 @@ static void test_presenter(void)
     CHECK(g_fake.present_calls == 2);
 }
 
+static void test_builtin_korean(void)
+{
+    uint32_t rows[32];
+    uint32_t x, y;
+    reset(64u, 48u, 64u);
+    g_w[0] = make(PIXELICA_UI_LABEL, 1u, 0, 0, 64, 48, "\xED\x95\x9C");
+    begin(1u);
+    g_ui.theme.font = pixelica_font_korean(1u);
+    CHECK(draw() == PIXELICA_OK);
+    CHECK(g_ui.theme.font.glyph(NULL, 0xD55Cu, rows));
+    for (y = 0u; y < 16u; ++y) for (x = 0u; x < 16u; ++x) {
+        bool ink = (rows[y] & (UINT32_C(0x80000000) >> x)) != 0u;
+        CHECK(at((int)x+2, (int)y+2) == (ink ? C_TEXT : SENT));
+    }
+}
+
 int main(void)
 {
+    test_builtin_korean();
     test_panel_label_clip();
     test_invalid_no_mutation();
     test_custom_korean_and_fallback();

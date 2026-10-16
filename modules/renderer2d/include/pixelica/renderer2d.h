@@ -73,6 +73,7 @@
 #include <stdint.h>
 #include "pixelica/status.h"
 #include "pixelica/math.h"
+#include "pixelica/font.h"
 #include "pixelica/image.h"
 #include "pixelica/assets_common.h"
 #include "pixelica/animation.h"
@@ -346,6 +347,15 @@ PIXELICA_Status pixelica2d_draw_tilemap(PIXELICA2D_Context *ctx, const PIXELICA2
  */
 PIXELICA_Status pixelica2d_draw_text(PIXELICA2D_Context *ctx, const PIXELICA2D_Font *font, const char *text, size_t length,
                           int32_t x, int32_t y, uint16_t color, uint8_t opacity);
+
+/* Unicode path: same font as UI, strict UTF-8, fixed cells and visible outline
+ * for missing glyphs. Newline advances (height+1)*scale; other codepoints
+ * advance (width+1)*scale. No shaping/RTL/normalization. Coordinates are screen
+ * pixels; clip and opacity apply, camera/depth ignored. Limits/NULL/counting
+ * match draw_text. Invalid UTF-8 is rejected before any drawing, even at alpha 0.
+ * Callback must obey font.h; font/text must not overlap color or depth targets. */
+PIXELICA_Status pixelica2d_draw_text_utf8(PIXELICA2D_Context *ctx, const PIXELICA_Font *font,
+    const char *text, size_t length, int32_t x, int32_t y, uint16_t color, uint8_t opacity);
 
 /*
  * Project a map point (x,y ground plane, z height) to screen:

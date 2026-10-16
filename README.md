@@ -306,3 +306,10 @@ npm start
 ```
 
 문서 작성, 컴포넌트 추가, 버전 관리와 GitHub Pages 배포는 [website/README.md](website/README.md)를 참고하세요.
+
+### 다국어 텍스트
+
+UI와 2D 텍스트는 공통 `PIXELICA_Font`를 사용합니다. 내장 `pixelica_font_korean()`과
+`pixelica2d_draw_text_utf8()`로 완성형 한글·가나·일부 한자를 표시하고,
+`pixelica_font_check_text()`로 누락 글자를 검사합니다. 기본 작은 영문 폰트와 기존 바이트
+텍스트 API는 유지합니다. 폰트 지정·용량·OFL 고지·문자 조합 제한은 [다국어 가이드](docs/i18n.md)를 확인하세요.

@@ -1091,6 +1091,54 @@ static void test_text(void)
 
 /* ---- isometric ----------------------------------------------------------- */
 
+static bool unicode_test_glyph(void *userdata, uint32_t cp, uint32_t rows[32])
+{
+    (void)userdata;
+    if (cp != 0xD55Cu && cp != 0x1F600u && cp != 'A') return false;
+    rows[0] = 0xE0000000u; rows[1] = 0xA0000000u; rows[2] = 0xE0000000u;
+    return true;
+}
+
+static void test_text_utf8(void)
+{
+    PIXELICA_Font font = {3u, 3u, 1u, unicode_test_glyph, NULL}, bad;
+    Fixture f;
+    Snapshot snap;
+    uint16_t expected[80];
+    const char text[] = "\xED\x95\x9C\xF0\x9F\x98\x80\n?";
+    size_t x, y;
+    fx_init(&f, 10, 8, 12, 1);
+    for (y = 0u; y < 8u; ++y) for (x = 0u; x < 10u; ++x) {
+        int ink = (y < 3u && (x < 3u || (x >= 4u && x < 7u)) &&
+            (y != 1u || (x % 4u) != 1u)) ||
+            (y >= 4u && y < 7u && x < 3u && (y != 5u || x != 1u));
+        expected[y*10u+x] = (uint16_t)(ink ? WHT : BG);
+    }
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, text, sizeof text-1u, 0, 0, WHT, 255u) == PIXELICA_OK);
+    CHECK(fx_matches(&f, expected));
+    CHECK(fx_padding_ok(&f));
+    CHECK(fx_dp(&f, 0, 0) == UINT16_MAX);
+    fx_snap(&f, &snap);
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, "A\xC0\x80", 3u, 0, 0, WHT, 255u) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(fx_unchanged(&f, &snap));
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, "\xED\x95", 2u, 0, 0, WHT, 0u) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(fx_unchanged(&f, &snap));
+    bad = font; bad.scale = 0u;
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &bad, "A", 1u, 0, 0, WHT, 255u) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(fx_unchanged(&f, &snap));
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, (const char *)f.color, 1u, 0, 0, WHT, 255u) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(fx_unchanged(&f, &snap));
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, NULL, 1u, 0, 0, WHT, 255u) == PIXELICA_ERR_INVALID_ARG);
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, "", (size_t)PIXELICA2D_MAX_TEXT_BYTES+1u, 0, 0, WHT, 255u) == PIXELICA_ERR_INVALID_ARG);
+    fx_init(&f, 10, 8, 12, 0);
+    font.scale = 2u;
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, "A", 1u, -2, -2, RED, 255u) == PIXELICA_OK);
+    CHECK(fx_px(&f, 0, 0) == BG && fx_px(&f, 2, 0) == RED && fx_px(&f, 0, 2) == RED);
+    CHECK(fx_padding_ok(&f));
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, text, sizeof text-1u, INT32_MIN, INT32_MAX, RED, 128u) == PIXELICA_OK);
+    CHECK(pixelica2d_draw_text_utf8(&f.ctx, &font, NULL, 0u, 0, 0, RED, 0u) == PIXELICA_OK);
+}
+
 static void test_iso(void)
 {
     PIXELICA2D_Iso iso, b;
@@ -1172,6 +1220,7 @@ int main(void)
     test_draw_list();
     test_tilemap();
     test_text();
+    test_text_utf8();
     test_iso();
     if (g_failures != 0) {
         fprintf(stderr, "test_renderer2d: %d of %d checks FAILED\n", g_failures, g_checks);

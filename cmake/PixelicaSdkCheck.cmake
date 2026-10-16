@@ -310,7 +310,7 @@ if(NOT (PIXELICA_EXPECT_3D AND PIXELICA_EXPECT_2D))
   return()
 endif()
 
-set(common_headers status.h input.h platform.h math.h animation.h anim_clip.h image.h draw_options.h assets_common.h save.h storage.h app.h screens.h i18n.h camera.h debug.h chunks.h framebuffer.h light.h collision2d.h)
+set(common_headers status.h input.h platform.h math.h animation.h anim_clip.h image.h draw_options.h assets_common.h save.h storage.h app.h screens.h i18n.h font.h camera.h debug.h chunks.h framebuffer.h light.h collision2d.h)
 set(only_3d_headers pixelica.h renderer.h assets.h scene.h)
 list(TRANSFORM common_headers PREPEND "include/pixelica/" OUTPUT_VARIABLE common_header_paths)
 list(TRANSFORM only_3d_headers PREPEND "include/pixelica/" OUTPUT_VARIABLE only_3d_header_paths)
@@ -437,9 +437,13 @@ int main(void)
     PIXELICA2D_Sprite sprite;
     PIXELICA_DrawOptions options = pixelica_draw_options_default();
     float m[16];
+    PIXELICA_Font korean = pixelica_font_korean(1u);
+    if (pixelica_font_check_text(&korean, "\xED\x95\x9C", 3u, NULL, NULL) != PIXELICA_OK) return 60;
     if (pixelica2d_init(&ctx, &surface) != PIXELICA_OK) return 1;
     if (pixelica2d_clear(&ctx, 0x1234u) != PIXELICA_OK) return 2;
     if (px[15] != 0x1234u) return 3;
+    if (pixelica2d_draw_text_utf8(&ctx, &korean, "\xED\x95\x9C", 3u, -4, 0, 0xffffu, 255u) != PIXELICA_OK) return 61;
+    if (pixelica2d_clear(&ctx, 0x1234u) != PIXELICA_OK) return 62;
     if (pixelica2d_sprite_init(&sprite, &tex) != PIXELICA_OK) return 7;
     options.wrap_u = PIXELICA_WRAP_REPEAT;
     options.alpha_mode = PIXELICA_ALPHA_BLEND;

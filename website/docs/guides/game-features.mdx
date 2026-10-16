@@ -39,3 +39,9 @@ title: 게임 기능 연결하기
 `hello_lifecycle`은 저장 후 프로세스를 다시 시작해 이어하기를 검사합니다. `hello_lighting`은 공통 플랫폼 드라이버를 사용하므로 SDL3 창으로 실행할 수 있습니다. `hello_pixel_light`는 HEADLESS 캡처·검증 프로그램입니다.
 
 CTest의 `lifecycle_checkpoint_restart`, `test_anim_clip`, `test_lighting`, `test_blend_add`, `test_blend_add2d`, `test_bloom` 등으로 변경 범위를 검사하세요. 등록되는 테스트는 빌드 옵션에 따라 달라집니다. 최신 개발 명령과 날짜별 검증 범위는 [개발 문서](../engine/DEVELOPMENT.md)의 42장을 확인하세요.
+
+## 다국어 텍스트와 한글 폰트
+
+`pixelica_font_korean(1)`의 내장 한글 폰트를 UI 테마와 `pixelica2d_draw_text_utf8()`에 공유할 수 있습니다. 완성형 한글 전체와 ASCII·가나·일부 한자를 포함하며, 기존 작은 영문 폰트와 바이트 텍스트 API도 유지합니다.
+
+`pixelica_font_check_text()`로 누락 글자를 검사하세요. 잘못된 UTF-8은 2D 그리기 전에 거부하고, 글리프가 없는 문자는 상자로 표시합니다. 내장 폰트 데이터는 약 715 KiB이며 호출한 경우에만 링크됩니다. 더 작은 게임은 BDF 서브셋 도구를 사용할 수 있습니다. OFL 라이선스 동봉과 정규화·RTL·shaping 제한은 [다국어·폰트 가이드](../engine/i18n.md)를 따릅니다. `hello_unicode`은 여러 언어의 UI/2D 픽셀 일치를 검사하고 PPM 캡처를 만듭니다.

@@ -436,3 +436,18 @@ if(PIXELICA_BUILD_2D)
                    "examples/common2d/demo2d.h do not exist yet (CMake re-configures once they appear)")
   endif()
 endif()
+
+# Unicode font parity/capture demo: always HEADLESS, no platform driver.
+if(PIXELICA_BUILD_2D)
+  add_executable(hello_unicode hello_unicode/main.c)
+  target_link_libraries(hello_unicode PRIVATE pixelica_renderer2d pixelica_ui pixelica_options)
+  set_target_properties(hello_unicode PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+  if(MSVC)
+    target_compile_definitions(hello_unicode PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+  if(BUILD_TESTING)
+    add_test(NAME smoke_hello_unicode COMMAND hello_unicode)
+    set_tests_properties(smoke_hello_unicode PROPERTIES LABELS "smoke;font" TIMEOUT 20
+      PASS_REGULAR_EXPRESSION "missing=0 ui_2d_pixels_match=1")
+  endif()
+endif()

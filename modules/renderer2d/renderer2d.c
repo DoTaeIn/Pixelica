@@ -1045,6 +1045,64 @@ PIXELICA_Status pixelica2d_draw_text(PIXELICA2D_Context *ctx, const PIXELICA2D_F
     return PIXELICA_OK;
 }
 
+PIXELICA_Status pixelica2d_draw_text_utf8(PIXELICA2D_Context *ctx, const PIXELICA_Font *font,
+    const char *text, size_t length, int32_t x, int32_t y, uint16_t color, uint8_t opacity)
+{
+    PIXELICA2D_Target t;
+    PIXELICA2D_Mem mem;
+    PIXELICA2D_Shade sh;
+    PIXELICA_Font f;
+    int64_t px = x, py = y, cx1, cy1;
+    size_t off = 0u;
+    uint32_t cp, rows[32];
+    uint64_t written = 0u;
+    if (!pixelica2d_target(ctx, &t) || !pixelica_font_valid(font) ||
+        length > PIXELICA2D_MAX_TEXT_BYTES || (length != 0u && text == NULL)) return PIXELICA_ERR_INVALID_ARG;
+    if (!pixelica2d_mem(font, sizeof *font, 1u, &mem) || pixelica2d_hits(&t, mem, NULL) ||
+        (length != 0u && (!pixelica2d_mem(text, length, 1u, &mem) || pixelica2d_hits(&t, mem, NULL))))
+        return PIXELICA_ERR_INVALID_ARG;
+    f = *font;
+    while (off < length) {
+        if (!pixelica_utf8_next(text, length, &off, &cp)) return PIXELICA_ERR_INVALID_ARG;
+    }
+    off = 0u;
+    memset(&sh, 0, sizeof sh);
+    sh.alpha = opacity;
+    cx1 = (int64_t)t.clip.x + t.clip.width;
+    cy1 = (int64_t)t.clip.y + t.clip.height;
+    while (sh.alpha != 0u && pixelica_utf8_next(text, length, &off, &cp)) {
+        uint32_t r, c, sy, sx;
+        if (cp == 10u) {
+            px = x;
+            py += ((int64_t)f.height + 1) * f.scale;
+            continue;
+        }
+        if (px < cx1 && px + (int64_t)f.width * f.scale > t.clip.x &&
+            py < cy1 && py + (int64_t)f.height * f.scale > t.clip.y) {
+            memset(rows, 0, sizeof rows);
+            if (!f.glyph(f.userdata, cp, rows)) {
+                uint32_t mask = UINT32_MAX << (32u - f.width);
+                for (r = 0u; r < f.height; ++r)
+                    rows[r] = (r == 0u || r + 1u == f.height) ? mask :
+                        (UINT32_C(0x80000000) | (UINT32_C(0x80000000) >> (f.width - 1u)));
+            }
+            for (r = 0u; r < f.height; ++r) for (c = 0u; c < f.width; ++c) {
+                if ((rows[r] & (UINT32_C(0x80000000) >> c)) == 0u) continue;
+                for (sy = 0u; sy < f.scale; ++sy) for (sx = 0u; sx < f.scale; ++sx) {
+                    int64_t dx = px + (int64_t)c * f.scale + sx;
+                    int64_t dy = py + (int64_t)r * f.scale + sy;
+                    if (dx >= t.clip.x && dx < cx1 && dy >= t.clip.y && dy < cy1)
+                        pixelica2d_plot(&sh, pixelica2d_color_row(&t, (int32_t)dy) + dx,
+                            NULL, color, &written);
+                }
+            }
+        }
+        px += ((int64_t)f.width + 1) * f.scale;
+    }
+    pixelica2d_account(ctx, 1u, written);
+    return PIXELICA_OK;
+}
+
 static int pixelica2d_iso_ok(const PIXELICA2D_Iso *iso)
 {
     return iso != NULL && isfinite(iso->tile_width) && iso->tile_width > 0.0f && isfinite(iso->tile_height) &&

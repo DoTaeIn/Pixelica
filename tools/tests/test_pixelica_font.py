@@ -320,5 +320,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(tables(self.out.read_text("utf-8"))[0], [0x20, 0x41])
 
 
+class BundledFontTests(unittest.TestCase):
+    def test_reproducible_table(self):
+        # Only source-tree runs include the original bundled BDF and generator.
+        generator = TOOLS / "generate_builtin_font.py"
+        if not generator.exists():
+            self.skipTest("bundled font generator is source-tree only")
+        spec = importlib.util.spec_from_file_location("builtin_font", generator)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.generate(), (TOOLS.parent / "src/game/font_korean_data.inc").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

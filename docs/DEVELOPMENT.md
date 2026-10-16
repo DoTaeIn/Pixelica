@@ -2651,3 +2651,18 @@ Release 뗏목 데모의 기록은 256×192, 48×48 수면 격자, 부력 지점
 macOS의 기본 엔진과 SDL3 창 실행은 확인했지만 온라인 모듈은 여전히 Windows/Linux 경로만
 허용합니다. 물 애드온의 Windows/Linux 바이너리·실물 ESP32-P4 성능·전원 및 저장 장치 동작은
 이번 로컬 검증으로 확인되지 않습니다. 과거 Windows/Linux 테스트 기록과 구분합니다.
+
+### 42.6 공통 유니코드 폰트와 한글 (2026-10-16)
+
+`font.h`의 공통 `PIXELICA_Font`를 UI와 새 `pixelica2d_draw_text_utf8()`가 공유합니다.
+기존 UI 타입·작은 영문 기본 폰트·바이트 기반 `pixelica2d_draw_text()`는 유지합니다.
+내장 GalmuriMono11 16×16은 완성형 한글 11,172자와 추가 문자를 포함합니다.
+약 715 KiB 테이블은 함수 호출 시에만 링크되며 SDK에 OFL 라이선스를 함께 설치합니다.
+`pixelica_font_check_text()`는 글리프 누락을 보고합니다. UTF-8 검사는 그리기 전에 수행하고
+shaping·RTL·정규화·TTF 로딩은 제공하지 않습니다. 자세한 사용법은 [i18n.md](i18n.md)를 따릅니다.
+
+macOS ARM64 HEADLESS Debug strict 물 ON 전체 CTest 74/74 통과,
+3D OFF ASan/UBSan의 폰트·2D·UI·데모 4/4 통과, 웹 타입 검사·빌드 통과를 확인했습니다.
+`hello_unicode` 캡처를 직접 확인했으며 UI/2D 전체 픽셀 일치를 검사합니다.
+Galmuri 고정 원본에서 생성 테이블을 재현하는 검사와 SDK의 폰트 링크·라이선스 설치를 포함합니다.
+Windows/Linux 및 실보드에서 새 폰트를 실행한 결과는 포함하지 않습니다.

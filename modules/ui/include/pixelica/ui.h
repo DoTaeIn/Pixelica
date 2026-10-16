@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "pixelica/debug.h"
+#include "pixelica/font.h"
 #include "pixelica/platform.h"
 #include "pixelica/status.h"
 #ifdef __cplusplus
@@ -32,12 +33,8 @@ typedef struct PIXELICA_UI_Surface {
 /* Fixed-cell Unicode bitmap callback. rows[0..height) use bit31 for the left
  * pixel. width=1..16, height=1..32, scale=1..4. False draws a missing-glyph box.
  * Do not modify UI state/buffers or retain rows. userdata is caller-owned. */
-typedef bool (*PIXELICA_UI_GlyphFn)(void *userdata, uint32_t codepoint, uint32_t rows[32]);
-typedef struct PIXELICA_UI_Font {
-    uint8_t width, height, scale;
-    PIXELICA_UI_GlyphFn glyph;
-    void *userdata;
-} PIXELICA_UI_Font;
+typedef PIXELICA_GlyphFn PIXELICA_UI_GlyphFn;
+typedef PIXELICA_Font PIXELICA_UI_Font;
 typedef struct PIXELICA_UI_Theme {
     uint16_t panel, text, disabled_text, control, hover, active, accent, border;
     uint8_t padding;

@@ -40,49 +40,7 @@ static bool ui_overlap(const void *a, size_t a_bytes, const void *b, size_t b_by
 bool pixelica_ui_utf8_next(const char *text, size_t length, size_t *offset,
     uint32_t *codepoint)
 {
-    const unsigned char *s = (const unsigned char *)text;
-    size_t i, n, k;
-    uint32_t c, min_value;
-
-    if (text == NULL || offset == NULL || codepoint == NULL || *offset >= length) {
-        return false;
-    }
-    i = *offset;
-    c = s[i];
-    if (c < 0x80u) {
-        n = 1u;
-        min_value = 0u;
-    } else if (c >= 0xC2u && c <= 0xDFu) {
-        n = 2u;
-        c &= 0x1Fu;
-        min_value = 0x80u;
-    } else if ((c & 0xF0u) == 0xE0u) {
-        n = 3u;
-        c &= 0x0Fu;
-        min_value = 0x800u;
-    } else if (c >= 0xF0u && c <= 0xF4u) {
-        n = 4u;
-        c &= 0x07u;
-        min_value = 0x10000u;
-    } else {
-        return false; /* stray continuation, C0/C1 overlong lead, F5..FF */
-    }
-    if (n > length - i) {
-        return false; /* truncated */
-    }
-    for (k = 1u; k < n; ++k) {
-        uint32_t b = s[i + k];
-        if ((b & 0xC0u) != 0x80u) {
-            return false;
-        }
-        c = (c << 6) | (b & 0x3Fu);
-    }
-    if (c < min_value || c > 0x10FFFFu || (c >= 0xD800u && c <= 0xDFFFu)) {
-        return false;
-    }
-    *offset = i + n;
-    *codepoint = c;
-    return true;
+    return pixelica_utf8_next(text, length, offset, codepoint);
 }
 
 /* ---- validation -------------------------------------------------------- */
